@@ -56,7 +56,20 @@ func loadCatalogOrExit(cfg *config.Config) []models.Entry {
 }
 
 func newEngineFromConfig(cfg *config.Config) engines.Engine {
-	eng, err := engines.New(cfg.Engine.Preferred, cfg.Engine.OllamaEndpoint)
+	name := cfg.Engine.Preferred
+	var endpoint, apiKey string
+	switch name {
+	case "ollama":
+		endpoint = cfg.Engine.OllamaEndpoint
+	case "vllm":
+		endpoint = cfg.Engine.VLLMEndpoint
+		apiKey = cfg.Engine.VLLMAPIKey
+	case "mlx", "mlx-lm":
+		endpoint = cfg.Engine.MLXEndpoint
+	default:
+		die("unknown engine %q (valid: ollama, vllm, mlx)", name)
+	}
+	eng, err := engines.NewWithAuth(name, endpoint, apiKey)
 	if err != nil {
 		die("engine: %v", err)
 	}

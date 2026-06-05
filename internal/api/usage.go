@@ -15,31 +15,44 @@ import (
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already
 // completed successfully from the user's perspective).
+//
+// Metrics always fire (even when no API key is in context — e.g., dev mode
+// with require_keys=false). The DB row is written with empty key/user
+// identifiers in that case; the per-key index simply has more empty-string
+// rows but everything stays observable.
 func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	u *engines.Usage, latency time.Duration, outcome string) {
 
-	keyRef := auth.KeyFrom(ctx)
-	if keyRef == nil {
-		return
+	var keyID, userID string
+	if k := auth.KeyFrom(ctx); k != nil {
+		keyID = k.ID
+		userID = k.UserID
 	}
-	rec := store.Usage{
-		TS:        time.Now(),
-		APIKeyID:  keyRef.ID,
-		UserID:    keyRef.UserID,
-		Model:     model,
-		Protocol:  protocol,
-		LatencyMS: int(latency.Milliseconds()),
-		Outcome:   outcome,
-	}
+
+	prompt, completion := 0, 0
 	if u != nil {
-		rec.PromptTokens = u.PromptTokens
-		rec.CompletionTokens = u.CompletionTokens
+		prompt = u.PromptTokens
+		completion = u.CompletionTokens
+	}
+
+	// Metrics first — always, regardless of auth state.
+	metrics.ObserveRequest(model, protocol, outcome, latency, prompt, completion)
+
+	rec := store.Usage{
+		TS:               time.Now(),
+		APIKeyID:         keyID,
+		UserID:           userID,
+		Model:            model,
+		Protocol:         protocol,
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		LatencyMS:        int(latency.Milliseconds()),
+		Outcome:          outcome,
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior
 		_ = err
 	}
-	metrics.ObserveRequest(model, protocol, outcome, latency, rec.PromptTokens, rec.CompletionTokens)
 }
 
 // QuotaMiddleware enforces per-key daily token quotas. Keys with quota=0

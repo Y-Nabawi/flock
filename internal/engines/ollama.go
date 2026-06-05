@@ -166,9 +166,20 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 	go func() {
 		defer close(out)
 		defer resp.Body.Close()
+		send := func(ev StreamEvent) bool {
+			select {
+			case out <- ev:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
+			if ctx.Err() != nil {
+				return
+			}
 			line := sc.Bytes()
 			if len(line) == 0 {
 				continue
@@ -185,11 +196,11 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 				Error           string `json:"error,omitempty"`
 			}
 			if err := json.Unmarshal(line, &ev); err != nil {
-				out <- StreamEvent{Err: fmt.Errorf("decode: %w", err)}
+				send(StreamEvent{Err: fmt.Errorf("decode: %w", err)})
 				return
 			}
 			if ev.Error != "" {
-				out <- StreamEvent{Err: fmt.Errorf("ollama: %s", ev.Error)}
+				send(StreamEvent{Err: fmt.Errorf("ollama: %s", ev.Error)})
 				return
 			}
 			if ev.Done {
@@ -198,15 +209,17 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 					CompletionTokens: ev.EvalCount,
 					TotalTokens:      ev.PromptEvalCount + ev.EvalCount,
 				}
-				out <- StreamEvent{Done: true, Usage: usage, Reason: reasonFrom(ev.DoneReason)}
+				send(StreamEvent{Done: true, Usage: usage, Reason: reasonFrom(ev.DoneReason)})
 				return
 			}
 			if ev.Message.Content != "" {
-				out <- StreamEvent{Delta: ev.Message.Content}
+				if !send(StreamEvent{Delta: ev.Message.Content}) {
+					return
+				}
 			}
 		}
 		if err := sc.Err(); err != nil {
-			out <- StreamEvent{Err: fmt.Errorf("stream: %w", err)}
+			send(StreamEvent{Err: fmt.Errorf("stream: %w", err)})
 		}
 	}()
 

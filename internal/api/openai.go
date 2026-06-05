@@ -167,6 +167,11 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	stream <-chan engines.StreamEvent, id string, created int64, modelOut string, start time.Time) {
 
+	// Drain the stream channel on exit so the engine producer never blocks on
+	// a full buffer when the client disconnects. The engine goroutine respects
+	// ctx and will exit promptly; this is belt-and-suspenders.
+	defer drainStream(stream)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -184,6 +189,11 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 	})
 
 	for ev := range stream {
+		// Bail before writing if the client is gone — avoids broken-pipe noise.
+		if r.Context().Err() != nil {
+			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "cancelled")
+			return
+		}
 		if ev.Err != nil {
 			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "error")
 			writeSSEError(w, flusher, ev.Err)
@@ -226,14 +236,22 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 				}},
 			})
 		}
-		if r.Context().Err() != nil {
-			return
-		}
 	}
+}
+
+// drainStream consumes any remaining events on the channel in a goroutine so
+// the producer never blocks. The producer also respects ctx, so this returns
+// quickly in practice.
+func drainStream(stream <-chan engines.StreamEvent) {
+	go func() {
+		for range stream {
+		}
+	}()
 }
 
 func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stream <-chan engines.StreamEvent,
 	id string, created int64, modelOut string, start time.Time) {
+	defer drainStream(stream)
 
 	var text string
 	var u *engines.Usage
@@ -286,14 +304,29 @@ func (h *Handler) resolveModel(catalogID string) (string, error) {
 	return catalogID, nil
 }
 
+// lookupModelByCatalogID picks the engine-native model name for the configured
+// engine. Catalog entries can carry both an Ollama tag (source.ollama_name) and
+// an HF repo (source.repo); we pick the right one based on which engine the
+// gateway is talking to.
 func (h *Handler) lookupModelByCatalogID(catalogID string) (engineModel string, ok bool) {
 	for _, e := range h.Catalog {
-		if e.ID == catalogID {
-			if e.Source.Type == "ollama" && e.Source.OllamaName != "" {
+		if e.ID != catalogID {
+			continue
+		}
+		switch h.Engine.Name() {
+		case "ollama":
+			if e.Source.OllamaName != "" {
 				return e.Source.OllamaName, true
 			}
-			return e.ID, true
+		case "vllm", "mlx", "mlx-lm":
+			if e.Source.Repo != "" {
+				return e.Source.Repo, true
+			}
+			if e.Source.Path != "" {
+				return e.Source.Path, true
+			}
 		}
+		return e.ID, true
 	}
 	return "", false
 }

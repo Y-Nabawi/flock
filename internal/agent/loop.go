@@ -36,16 +36,25 @@ func (a *Agent) Register(ctx context.Context) error {
 		"address":       a.Address,
 		"hardware_json": mustJSON(a.Capabilities),
 	})
-	return a.post(ctx, "/admin/v1/nodes/register", body)
+	_, err := a.post(ctx, "/admin/v1/nodes/register", body)
+	return err
 }
 
 // Heartbeat sends a lightweight ping to keep the leader informed we're alive.
-func (a *Agent) Heartbeat(ctx context.Context) error {
+// Returns the HTTP status code so Loop can react differently to 401/404.
+func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
 	body, _ := json.Marshal(map[string]any{"id": a.NodeID})
 	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)
 }
 
 // Loop blocks running register + periodic heartbeat until ctx is done.
+//
+// Status-code handling:
+//   - 401 / 403: token revoked → exit with error so the supervisor (systemd /
+//     launchd / the user) can intervene. Burning CPU heartbeating an
+//     unauthorized leader is worse than failing fast.
+//   - 404: node was forgotten by the leader → try to re-register.
+//   - other (network errors, 5xx): exponential backoff up to 1 minute.
 func (a *Agent) Loop(ctx context.Context) error {
 	if a.HTTP == nil {
 		a.HTTP = &http.Client{Timeout: 10 * time.Second}
@@ -58,37 +67,61 @@ func (a *Agent) Loop(ctx context.Context) error {
 	} else {
 		a.Log.Info("registered with leader", "leader", a.LeaderURL, "node", a.NodeID)
 	}
-	t := time.NewTicker(a.HeartbeatInterval)
+	backoff := a.HeartbeatInterval
+	t := time.NewTimer(backoff)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			if err := a.Heartbeat(ctx); err != nil {
-				a.Log.Warn("heartbeat failed", "err", err)
+			code, err := a.Heartbeat(ctx)
+			if err == nil {
+				backoff = a.HeartbeatInterval
+				t.Reset(backoff)
+				continue
 			}
+			switch code {
+			case http.StatusUnauthorized, http.StatusForbidden:
+				a.Log.Error("heartbeat unauthorized; token may be revoked — exiting",
+					"code", code, "err", err)
+				return fmt.Errorf("agent unauthorized: %w", err)
+			case http.StatusNotFound:
+				a.Log.Warn("heartbeat 404; re-registering", "err", err)
+				if rerr := a.Register(ctx); rerr != nil {
+					a.Log.Warn("re-register failed", "err", rerr)
+				}
+				backoff = a.HeartbeatInterval
+			default:
+				a.Log.Warn("heartbeat failed", "code", code, "err", err, "next_backoff", backoff)
+				if backoff < time.Minute {
+					backoff *= 2
+				}
+			}
+			t.Reset(backoff)
 		}
 	}
 }
 
-func (a *Agent) post(ctx context.Context, path string, body []byte) error {
+// post returns the HTTP status code (0 if the request never reached upstream)
+// and an error if one occurred.
+func (a *Agent) post(ctx context.Context, path string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.LeaderURL+path, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.Token)
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s %s: %s: %s", req.Method, path, resp.Status, string(b))
+		return resp.StatusCode, fmt.Errorf("%s %s: %s: %s", req.Method, path, resp.Status, string(b))
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func mustJSON(v any) string {

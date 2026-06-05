@@ -106,7 +106,7 @@ func (m *MLX) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, er
 		return nil, fmt.Errorf("mlx chat: %s: %s", resp.Status, string(b))
 	}
 
-	go consumeOpenAIStream(resp.Body, out)
+	go consumeOpenAIStream(ctx, resp.Body, out)
 	return out, nil
 }
 

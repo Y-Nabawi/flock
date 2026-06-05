@@ -49,11 +49,16 @@ func tokenCreate(name, scope string) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	plain, rec, err := auth.Generate(name, scope)
+	// For v0.2 the token's name doubles as its UserID. Once OIDC lands the
+	// UserID will come from the issuing admin's session.
+	userID := name
+	if scope == "node" {
+		userID = "" // node tokens have no owner
+	}
+	plain, rec, err := auth.Generate(name, scope, userID)
 	if err != nil {
 		die("generate: %v", err)
 	}
-	rec.CreatedAt = time.Now()
 	if err := st.APIKeys().Create(context.Background(), rec); err != nil {
 		die("persist key: %v", err)
 	}

@@ -75,11 +75,13 @@ type anthropicResponse struct {
 }
 
 type anthropicContent struct {
-	Type  string `json:"type"`
-	Text  string `json:"text,omitempty"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`        // tool_use payload
+	ToolUseID string          `json:"tool_use_id,omitempty"`  // tool_result link
+	Content   json.RawMessage `json:"content,omitempty"`      // tool_result body (string or array)
 }
 
 type anthropicUsage struct {
@@ -176,6 +178,7 @@ func (h *AnthropicHandler) CountTokens(w http.ResponseWriter, r *http.Request) {
 
 func (h *AnthropicHandler) streamAnthropic(w http.ResponseWriter, r *http.Request,
 	stream <-chan engines.StreamEvent, msgID, modelOut string, start time.Time) {
+	defer drainStream(stream)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -211,6 +214,10 @@ func (h *AnthropicHandler) streamAnthropic(w http.ResponseWriter, r *http.Reques
 
 	var finalUsage *engines.Usage
 	for ev := range stream {
+		if r.Context().Err() != nil {
+			recordUsage(r.Context(), h.Store, "anthropic", modelOut, nil, time.Since(start), "cancelled")
+			return
+		}
 		if ev.Err != nil {
 			recordUsage(r.Context(), h.Store, "anthropic", modelOut, nil, time.Since(start), "error")
 			sendAnthropicEvent(w, flusher, "error", map[string]any{
@@ -268,6 +275,7 @@ func (h *AnthropicHandler) streamAnthropic(w http.ResponseWriter, r *http.Reques
 
 func (h *AnthropicHandler) aggregateAnthropic(w http.ResponseWriter, r *http.Request,
 	stream <-chan engines.StreamEvent, msgID, modelOut string, start time.Time) {
+	defer drainStream(stream)
 
 	var text strings.Builder
 	stopReason := "end_turn"
@@ -334,7 +342,14 @@ func parseSystem(raw json.RawMessage) string {
 }
 
 // anthropicMessagesToEngine converts the Anthropic messages list to the
-// engine-native list. Content blocks of unknown type are skipped.
+// engine-native list. Content blocks are flattened to a tag-marked text form
+// that preserves tool_use Input arguments and tool_result Content payloads so
+// the engine model has enough context to continue a tool-using conversation.
+//
+// We use XML-ish tags rather than the literal JSON because most open models
+// understand "<tool_use name=\"foo\">{...}</tool_use>" patterns from their
+// training data. Anthropic's native format is not directly speakable by
+// vLLM/MLX/Ollama, so this is the lossy-but-honest translation.
 func anthropicMessagesToEngine(in []anthropicMessage) []engines.Message {
 	out := make([]engines.Message, 0, len(in))
 	for _, m := range in {
@@ -352,10 +367,28 @@ func anthropicMessagesToEngine(in []anthropicMessage) []engines.Message {
 				case "text":
 					b.WriteString(blk.Text)
 				case "tool_use":
-					// represent as a synthetic assistant turn marker
-					b.WriteString(fmt.Sprintf("\n[tool_use:%s]\n", blk.Name))
+					input := "{}"
+					if len(blk.Input) > 0 {
+						input = string(blk.Input)
+					}
+					b.WriteString(fmt.Sprintf(
+						"\n<tool_use id=%q name=%q>%s</tool_use>\n",
+						blk.ID, blk.Name, input))
 				case "tool_result":
-					b.WriteString(fmt.Sprintf("\n[tool_result:%s]\n", blk.ID))
+					content := ""
+					if len(blk.Content) > 0 {
+						// Content is either a JSON string or array of blocks.
+						// Try string first so we don't include quotes.
+						var s string
+						if err := json.Unmarshal(blk.Content, &s); err == nil {
+							content = s
+						} else {
+							content = string(blk.Content)
+						}
+					}
+					b.WriteString(fmt.Sprintf(
+						"\n<tool_result tool_use_id=%q>%s</tool_result>\n",
+						blk.ToolUseID, content))
 				}
 			}
 			out = append(out, engines.Message{Role: m.Role, Content: b.String()})

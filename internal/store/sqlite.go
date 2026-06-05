@@ -7,7 +7,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -120,7 +122,7 @@ type AuditStore interface {
 // ---- open ----
 
 func OpenSQLite(dsn string) (Store, error) {
-	db, err := sql.Open("sqlite", dsn+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)")
+	db, err := sql.Open("sqlite", appendPragmas(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -211,6 +213,18 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
+// appendPragmas safely appends the required pragma settings to a DSN that
+// may already contain a query string. modernc's sqlite driver supports
+// multiple `_pragma=` params separated by `&`.
+func appendPragmas(dsn string) string {
+	pragmas := "_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + pragmas
+}
+
 // ---- api_keys ----
 
 type sqliteAPIKeys struct{ db *sql.DB }
@@ -245,7 +259,7 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 	var ts int64
 	var rev int
 	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &ts, &rev); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scan api_key: %w", err)
@@ -298,7 +312,8 @@ func (s *sqliteModels) Upsert(ctx context.Context, m Model) error {
 		   catalog_id=excluded.catalog_id,
 		   source=excluded.source,
 		   status=excluded.status,
-		   size_bytes=excluded.size_bytes`,
+		   size_bytes=excluded.size_bytes,
+		   installed_at=excluded.installed_at`,
 		m.ID, m.CatalogID, m.Source, m.Status, m.SizeBytes, m.InstalledAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert model: %w", err)
@@ -312,7 +327,7 @@ func (s *sqliteModels) Get(ctx context.Context, id string) (*Model, error) {
 	var m Model
 	var ts int64
 	if err := row.Scan(&m.ID, &m.CatalogID, &m.Source, &m.Status, &m.SizeBytes, &ts); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("scan model: %w", err)
@@ -373,7 +388,7 @@ func (s *sqliteNodes) Get(ctx context.Context, id string) (*Node, error) {
 	var n Node
 	var ts int64
 	if err := row.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.HardwareJSON, &ts, &n.State); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

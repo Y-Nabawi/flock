@@ -100,10 +100,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
+	// Recoverer first: a panic anywhere downstream is caught, and the
+	// accessLog middleware can still record the 500.
+	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.accessLog)
-	r.Use(middleware.Recoverer)
 
 	// Public
 	r.Get("/healthz", s.healthz)
@@ -164,14 +166,16 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	}
 	model := peekModel(body)
 	if vendor := api.Vendor(model); vendor != "" && s.cfg.Router.Fallback.Enabled {
-		r.Body = io.NopCloser(bytes.NewReader(body))
 		switch vendor {
 		case "openai":
+			r.Body = io.NopCloser(bytes.NewReader(body))
 			s.egressH.ServeOpenAI(w, r)
 		case "anthropic":
-			// odd case: OpenAI-format request asking for Claude. Proxy to OpenAI; let
-			// upstream complain about the model.
-			s.egressH.ServeOpenAI(w, r)
+			// Protocol mismatch: OpenAI-format request with a Claude model.
+			// Anthropic's API only accepts /v1/messages, so return an actionable
+			// error rather than forwarding garbage upstream.
+			writeJSONError(w, http.StatusBadRequest,
+				fmt.Sprintf("model %q is an Anthropic model; use POST /v1/messages with the Anthropic SDK or set ANTHROPIC_BASE_URL on your client", model))
 		}
 		return
 	}
@@ -187,9 +191,16 @@ func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	model := peekModel(body)
-	if vendor := api.Vendor(model); vendor == "anthropic" && s.cfg.Router.Fallback.Enabled {
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		s.egressH.ServeAnthropic(w, r)
+	if vendor := api.Vendor(model); vendor != "" && s.cfg.Router.Fallback.Enabled {
+		switch vendor {
+		case "anthropic":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeAnthropic(w, r)
+		case "openai":
+			// Protocol mismatch: Anthropic-format request with an OpenAI model.
+			writeJSONError(w, http.StatusBadRequest,
+				fmt.Sprintf("model %q is an OpenAI model; use POST /v1/chat/completions with the OpenAI SDK", model))
+		}
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -333,6 +344,10 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 }
 
 // auditMiddleware records every admin action.
+//
+// Target is set to the caller's remote address (useful for forensics) rather
+// than the URL query string — RawQuery can contain secrets (?token=...) that
+// would otherwise be persisted in plaintext to the audit_log table.
 func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r)
@@ -343,7 +358,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		_ = s.store.Audit().Record(r.Context(), store.AuditEntry{
 			TS: time.Now(), Actor: actor,
 			Action: r.Method + " " + r.URL.Path,
-			Target: r.URL.RawQuery,
+			Target: r.RemoteAddr,
 		})
 	})
 }
@@ -355,5 +370,5 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg}})
+	writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "invalid_request"}})
 }

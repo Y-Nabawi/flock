@@ -3,11 +3,13 @@
 // using a team-scoped key, logs the call via usage + audit, and returns the
 // vendor's response transparently.
 //
-// Configuration lives in config.Router.Fallback (or env vars at minimum).
+// Configuration lives in config.Router.Fallback (env vars at minimum).
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,6 +61,7 @@ func (e *EgressHandler) ServeAnthropic(w http.ResponseWriter, r *http.Request) {
 		"x-api-key":         e.Config.AnthropicKey,
 		"anthropic-version": "2023-06-01",
 		"Content-Type":      "application/json",
+		"User-Agent":        "flock/0.2",
 	})
 }
 
@@ -73,26 +76,54 @@ func (e *EgressHandler) ServeOpenAI(w http.ResponseWriter, r *http.Request) {
 	e.proxy(w, r, url, "openai", map[string]string{
 		"Authorization": "Bearer " + e.Config.OpenAIKey,
 		"Content-Type":  "application/json",
+		"User-Agent":    "flock/0.2",
 	})
 }
 
-// proxy forwards the request body to upstream, streams the response back,
-// and records usage. It does not parse the body — vendor wire formats pass
-// through unchanged.
+// hopByHopHeaders are the headers defined in RFC 7230 §6.1 that must not be
+// forwarded by intermediaries. We also strip Content-Length so net/http on
+// the outbound side recomputes it for our streamed response.
+var hopByHopHeaders = map[string]bool{
+	"Connection":          true,
+	"Proxy-Connection":    true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailers":            true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+	"Content-Length":      true,
+}
+
+// proxy forwards the inbound request body to upstream, streams the response
+// back, and records usage. We re-read the body into a fresh bytes.Reader so
+// the outbound request carries an accurate Content-Length (the dispatcher
+// wraps the body in io.NopCloser which masks the underlying *bytes.Reader
+// from http.NewRequest's known-type fast-path).
 func (e *EgressHandler) proxy(w http.ResponseWriter, r *http.Request, url, vendor string, headers map[string]string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, r.Method, url, r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "proxy_error", err.Error())
+		writeJSONError(w, http.StatusBadRequest, "read_error", err.Error())
+		recordEgress(ctx, e.Store, vendor, peekVendorModel(body), start, "error")
 		return
 	}
+	model := peekVendorModel(body)
+
+	req, err := http.NewRequestWithContext(ctx, r.Method, url, bytes.NewReader(body))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "proxy_error", err.Error())
+		recordEgress(ctx, e.Store, vendor, model, start, "error")
+		return
+	}
+	req.ContentLength = int64(len(body))
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	// preserve client's Accept for SSE/non-SSE distinction
 	if accept := r.Header.Get("Accept"); accept != "" {
 		req.Header.Set("Accept", accept)
 	}
@@ -100,33 +131,44 @@ func (e *EgressHandler) proxy(w http.ResponseWriter, r *http.Request, url, vendo
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
-		recordEgress(ctx, e.Store, vendor, "unknown", start, "error")
+		recordEgress(ctx, e.Store, vendor, model, start, "error")
 		return
 	}
 	defer resp.Body.Close()
 
-	// Mirror response headers
+	// Mirror response headers EXCEPT hop-by-hop. Let net/http compute the
+	// outbound framing (chunked) on its own.
 	for k, vs := range resp.Header {
+		if hopByHopHeaders[http.CanonicalHeaderKey(k)] {
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream body verbatim (handles SSE for streaming responses)
 	flusher, _ := w.(http.Flusher)
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := resp.Body.Read(buf)
+		// Check for client disconnect between iterations.
+		if r.Context().Err() != nil {
+			recordEgress(ctx, e.Store, vendor, model, start, "cancelled")
+			return
+		}
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			_, _ = w.Write(buf[:n])
+			if _, wErr := w.Write(buf[:n]); wErr != nil {
+				recordEgress(ctx, e.Store, vendor, model, start, "error")
+				return
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
 		}
-		if err != nil {
-			if err != io.EOF {
-				recordEgress(ctx, e.Store, vendor, "unknown", start, "error")
+		if readErr != nil {
+			if readErr != io.EOF {
+				recordEgress(ctx, e.Store, vendor, model, start, "error")
 				return
 			}
 			break
@@ -136,23 +178,38 @@ func (e *EgressHandler) proxy(w http.ResponseWriter, r *http.Request, url, vendo
 	if resp.StatusCode >= 400 {
 		outcome = "error"
 	}
-	recordEgress(ctx, e.Store, vendor, "unknown", start, outcome)
+	recordEgress(ctx, e.Store, vendor, model, start, outcome)
+}
+
+// peekVendorModel decodes just the "model" field from a JSON body. Returns ""
+// if absent or unparseable.
+func peekVendorModel(body []byte) string {
+	var m struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &m)
+	if m.Model == "" {
+		return "unknown"
+	}
+	return m.Model
 }
 
 func recordEgress(ctx context.Context, st store.Store, vendor, model string, start time.Time, outcome string) {
 	dur := time.Since(start)
 	metrics.ObserveRequest(model, vendor, outcome, dur, 0, 0)
 	key := auth.KeyFrom(ctx)
-	if key == nil {
-		return
+	keyID, userID := "", ""
+	if key != nil {
+		keyID = key.ID
+		userID = key.UserID
 	}
 	_ = st.Usage().Record(ctx, store.Usage{
-		TS: time.Now(), APIKeyID: key.ID, UserID: key.UserID,
+		TS: time.Now(), APIKeyID: keyID, UserID: userID,
 		Model: model, Protocol: vendor,
 		LatencyMS: int(dur.Milliseconds()), Outcome: outcome,
 	})
 	_ = st.Audit().Record(ctx, store.AuditEntry{
-		TS: time.Now(), Actor: key.UserID,
+		TS: time.Now(), Actor: userID,
 		Action: fmt.Sprintf("egress.%s", vendor),
 		Target: model,
 	})

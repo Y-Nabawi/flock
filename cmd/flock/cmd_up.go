@@ -56,9 +56,12 @@ func cmdUp(args []string) {
 		ok(os.Stdout, "default model: %s", cfg.Router.DefaultModel)
 	}
 
-	// 6. Engine
+	// 6. Engine — bounded health probe so a wedged-but-listening engine
+	//    doesn't block startup indefinitely.
 	eng := newEngineFromConfig(cfg)
-	engineOK := eng.Health(context.Background()) == nil
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	engineOK := eng.Health(healthCtx) == nil
+	healthCancel()
 	if !engineOK {
 		warn(os.Stdout, "engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
 		warn(os.Stdout, "start Ollama with `ollama serve` then check `flock status`")
@@ -92,15 +95,21 @@ func cmdUp(args []string) {
 func bootstrapAdminKey(st store.Store) string {
 	ctx := context.Background()
 	keys, err := st.APIKeys().List(ctx)
-	if err == nil && len(keys) > 0 {
+	if err != nil {
+		// Treat this as fatal-for-bootstrap: we cannot safely decide whether
+		// keys already exist. Refusing to mint avoids producing duplicate
+		// admin credentials on every flaky startup.
+		warn(os.Stdout, "could not list api keys (%v) — skipping bootstrap; check `flock token ls`", err)
 		return ""
 	}
-	plain, rec, err := auth.Generate("initial-admin", "admin")
+	if len(keys) > 0 {
+		return ""
+	}
+	plain, rec, err := auth.Generate("initial-admin", "admin", "admin")
 	if err != nil {
 		warn(os.Stdout, "could not bootstrap admin key: %v", err)
 		return ""
 	}
-	rec.CreatedAt = time.Now()
 	if err := st.APIKeys().Create(ctx, rec); err != nil {
 		warn(os.Stdout, "could not persist admin key: %v", err)
 		return ""

@@ -26,6 +26,9 @@ import (
 	"strings"
 )
 
+// (consumeOpenAIStream uses context.Context for cancellation; ensures the
+// `context` import is referenced even when build tags exclude code paths.)
+
 // VLLM is an Engine that proxies to a running vLLM OpenAI-compatible server.
 type VLLM struct {
 	endpoint string
@@ -125,7 +128,7 @@ func (v *VLLM) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, e
 		return nil, fmt.Errorf("vllm chat: %s: %s", resp.Status, string(b))
 	}
 
-	go consumeOpenAIStream(resp.Body, out)
+	go consumeOpenAIStream(ctx, resp.Body, out)
 	return out, nil
 }
 
@@ -168,19 +171,48 @@ func buildOpenAIChatBody(req ChatRequest) map[string]any {
 	return body
 }
 
-func consumeOpenAIStream(body io.ReadCloser, out chan<- StreamEvent) {
+// consumeOpenAIStream reads an SSE response from an OpenAI-compatible server
+// and translates each chunk into a StreamEvent. It correctly handles servers
+// (vLLM, MLX) that send a separate usage-only chunk AFTER the finish_reason
+// chunk: the function captures finish_reason but continues reading until
+// it sees `[DONE]` or a chunk carrying Usage.
+func consumeOpenAIStream(ctx context.Context, body io.ReadCloser, out chan<- StreamEvent) {
 	defer body.Close()
 	defer close(out)
+	send := func(ev StreamEvent) bool {
+		select {
+		case out <- ev:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var finishReason string
+	var emittedFinal bool
+
+	emitFinal := func(u *Usage) {
+		if emittedFinal {
+			return
+		}
+		emittedFinal = true
+		send(StreamEvent{Done: true, Reason: finishReason, Usage: u})
+	}
+
 	for sc.Scan() {
+		if ctx.Err() != nil {
+			return
+		}
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
-			out <- StreamEvent{Done: true}
+			emitFinal(nil)
 			return
 		}
 		var ev struct {
@@ -197,40 +229,45 @@ func consumeOpenAIStream(body io.ReadCloser, out chan<- StreamEvent) {
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			out <- StreamEvent{Err: fmt.Errorf("decode openai chunk: %w", err)}
+			send(StreamEvent{Err: fmt.Errorf("decode openai chunk: %w", err)})
 			return
 		}
 		if len(ev.Choices) > 0 {
 			ch := ev.Choices[0]
 			if ch.Delta.Content != "" {
-				out <- StreamEvent{Delta: ch.Delta.Content}
+				if !send(StreamEvent{Delta: ch.Delta.Content}) {
+					return
+				}
 			}
 			if ch.FinishReason != nil {
-				evt := StreamEvent{Done: true, Reason: *ch.FinishReason}
+				finishReason = *ch.FinishReason
+				// Don't return — wait for the usage-only chunk or [DONE].
+				// If the same chunk carries Usage, emit final immediately.
 				if ev.Usage != nil {
-					evt.Usage = &Usage{
+					emitFinal(&Usage{
 						PromptTokens:     ev.Usage.PromptTokens,
 						CompletionTokens: ev.Usage.CompletionTokens,
 						TotalTokens:      ev.Usage.TotalTokens,
-					}
+					})
+					return
 				}
-				out <- evt
-				return
 			}
 		}
 		if ev.Usage != nil && len(ev.Choices) == 0 {
-			// some servers emit a final usage-only chunk
-			out <- StreamEvent{Done: true, Usage: &Usage{
+			emitFinal(&Usage{
 				PromptTokens:     ev.Usage.PromptTokens,
 				CompletionTokens: ev.Usage.CompletionTokens,
 				TotalTokens:      ev.Usage.TotalTokens,
-			}}
+			})
 			return
 		}
 	}
 	if err := sc.Err(); err != nil {
-		out <- StreamEvent{Err: fmt.Errorf("stream: %w", err)}
+		send(StreamEvent{Err: fmt.Errorf("stream: %w", err)})
+		return
 	}
+	// stream ended without explicit [DONE] — synthesize one
+	emitFinal(nil)
 }
 
 var _ Engine = (*VLLM)(nil)

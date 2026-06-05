@@ -30,7 +30,10 @@ const (
 
 // Generate creates a new random API key, returning the plaintext key
 // (shown to the user once) and its sha256 hash (stored in the DB).
-func Generate(name, scope string) (plain string, rec store.APIKey, err error) {
+//
+// userID identifies the owner. Pass "" for tokens with no owner concept
+// (e.g., node-join tokens, the very first admin key).
+func Generate(name, scope, userID string) (plain string, rec store.APIKey, err error) {
 	buf := make([]byte, 24)
 	if _, err = rand.Read(buf); err != nil {
 		return "", store.APIKey{}, fmt.Errorf("rand: %w", err)
@@ -42,6 +45,7 @@ func Generate(name, scope string) (plain string, rec store.APIKey, err error) {
 		Hash:      Hash(plain),
 		Name:      name,
 		Scope:     scope,
+		UserID:    userID,
 		CreatedAt: time.Now(),
 	}
 	return plain, rec, nil

@@ -46,17 +46,20 @@ func modelAdd(id string) {
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
 	}
-	engineName := entry.Source.OllamaName
-	if engineName == "" {
-		engineName = entry.ID
-	}
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	eng := newEngineFromConfig(cfg)
-	if err := eng.Health(context.Background()); err != nil {
-		die("engine not reachable (%v) — start Ollama: `ollama serve`", err)
+
+	// Pick the engine-native model name based on which engine we're using.
+	engineName := engineNativeName(eng.Name(), entry)
+	if engineName == "" {
+		die("catalog entry %s has no source name compatible with engine %s", entry.ID, eng.Name())
 	}
-	note(os.Stdout, "pulling %s (%s) ...", entry.ID, engineName)
+
+	if err := eng.Health(context.Background()); err != nil {
+		die("engine not reachable (%v) — start it first", err)
+	}
+	note(os.Stdout, "pulling %s (%s via %s) ...", entry.ID, engineName, eng.Name())
 	err := eng.Pull(context.Background(), engineName, func(status string, completed, total int64) {
 		if total > 0 {
 			pct := completed * 100 / total
@@ -70,12 +73,31 @@ func modelAdd(id string) {
 	_ = st.Models().Upsert(context.Background(), store.Model{
 		ID:          entry.ID,
 		CatalogID:   entry.ID,
-		Source:      "ollama:" + engineName,
+		Source:      eng.Name() + ":" + engineName,
 		Status:      "ready",
 		SizeBytes:   entry.SizeBytes,
 		InstalledAt: time.Now(),
 	})
 	ok(os.Stdout, "installed: %s", entry.ID)
+}
+
+// engineNativeName picks the right field from the catalog source for a given
+// engine. Returns "" if no compatible field is set.
+func engineNativeName(engine string, e *models.Entry) string {
+	switch engine {
+	case "ollama":
+		if e.Source.OllamaName != "" {
+			return e.Source.OllamaName
+		}
+	case "vllm", "mlx", "mlx-lm":
+		if e.Source.Repo != "" {
+			return e.Source.Repo
+		}
+		if e.Source.Path != "" {
+			return e.Source.Path
+		}
+	}
+	return e.ID
 }
 
 func modelLs() {
@@ -108,9 +130,10 @@ func modelRemove(id string) {
 		die("no such model: %s", id)
 	}
 	eng := newEngineFromConfig(cfg)
-	engineName := strings.TrimPrefix(m.Source, "ollama:")
-	if engineName == m.Source { // no prefix found
-		engineName = id
+	// Source format is "<engine_name>:<model_name>" — strip the first prefix.
+	engineName := id
+	if idx := strings.Index(m.Source, ":"); idx >= 0 && idx < len(m.Source)-1 {
+		engineName = m.Source[idx+1:]
 	}
 	if err := eng.Delete(context.Background(), engineName); err != nil {
 		warn(os.Stdout, "engine delete failed (continuing): %v", err)
