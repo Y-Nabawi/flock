@@ -116,14 +116,14 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req struct {
-		Model       string                   `json:"model"`
-		Messages    []map[string]string      `json:"messages"`
-		System      string                   `json:"system,omitempty"`
-		Stream      bool                     `json:"stream,omitempty"`
-		Temperature *float32                 `json:"temperature,omitempty"`
-		TopP        *float32                 `json:"top_p,omitempty"`
-		MaxTokens   *int                     `json:"max_tokens,omitempty"`
-		Stop        []string                 `json:"stop,omitempty"`
+		Model       string              `json:"model"`
+		Messages    []map[string]string `json:"messages"`
+		System      string              `json:"system,omitempty"`
+		Stream      bool                `json:"stream,omitempty"`
+		Temperature *float32            `json:"temperature,omitempty"`
+		TopP        *float32            `json:"top_p,omitempty"`
+		MaxTokens   *int                `json:"max_tokens,omitempty"`
+		Stop        []string            `json:"stop,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)

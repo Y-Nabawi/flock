@@ -5,11 +5,11 @@
 //
 // Selection policy (v0.3):
 //
-//   1. If the local engine has the model loaded, use local (lowest latency).
-//   2. Otherwise look up all worker nodes that have the model loaded.
-//   3. Among those, pick the one with the fewest in-flight requests.
-//   4. If no node has the model, fall through to local — the local engine
-//      will return a "model not found" error which surfaces correctly.
+//  1. If the local engine has the model loaded, use local (lowest latency).
+//  2. Otherwise look up all worker nodes that have the model loaded.
+//  3. Among those, pick the one with the fewest in-flight requests.
+//  4. If no node has the model, fall through to local — the local engine
+//     will return a "model not found" error which surfaces correctly.
 //
 // Remote engines reuse the vLLM driver (workers expose an OpenAI-compatible
 // surface, just like vLLM/MLX). Engines are cached per node so we don't
@@ -30,9 +30,9 @@ import (
 // Router implements engines.Engine by dispatching to either the local engine
 // or a remote worker engine based on cluster placements.
 type Router struct {
-	local      engines.Engine
-	store      store.Store
-	localNode  string // node id used for "local" placements (typically "local")
+	local     engines.Engine
+	store     store.Store
+	localNode string // node id used for "local" placements (typically "local")
 
 	mu       sync.RWMutex
 	inflight map[string]int            // node_id → live request count

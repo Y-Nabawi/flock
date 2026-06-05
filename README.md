@@ -121,7 +121,10 @@ claude
 - ✅ `curl /v1/chat/completions` reaches Ollama and translates errors back as proper OpenAI shape
 - ⚠️ Actual model inference response — Homebrew's `ollama` formula on arm64 is broken (missing internal `llama-server` binary); use `brew install --cask ollama` or `curl -fsSL https://ollama.com/install.sh | sh` for a working Ollama install
 
-**For users**: keep reading this file. **For contributors**: see [ARCHITECTURE.md](ARCHITECTURE.md). **For the dev team**: see [TASKS.md](TASKS.md).
+**For new users**: see [QUICKSTART.md](QUICKSTART.md) — 3-minute install + first chat completion.
+**For full usage docs**: keep reading this file.
+**For contributors**: see [ARCHITECTURE.md](ARCHITECTURE.md).
+**For the dev team's roadmap**: see [TASKS.md](TASKS.md).
 
 ---
 

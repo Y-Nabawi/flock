@@ -36,9 +36,9 @@ func NewLAN() Backend {
 
 type lanBackend struct{}
 
-func (l *lanBackend) Name() string                    { return "lan" }
-func (l *lanBackend) Hostname() (string, error)       { return os.Hostname() }
-func (l *lanBackend) Close() error                    { return nil }
+func (l *lanBackend) Name() string              { return "lan" }
+func (l *lanBackend) Hostname() (string, error) { return os.Hostname() }
+func (l *lanBackend) Close() error              { return nil }
 
 func (l *lanBackend) Address(port int) (string, error) {
 	ip, err := outboundIP()

@@ -26,8 +26,8 @@ import (
 
 // ProcessSpec describes a child process to launch.
 type ProcessSpec struct {
-	ID         string            // caller-assigned unique id
-	Command    string            // absolute path or PATH-resolvable binary
+	ID         string // caller-assigned unique id
+	Command    string // absolute path or PATH-resolvable binary
 	Args       []string
 	Env        map[string]string // appended to os.Environ()
 	WorkDir    string            // optional; defaults to CWD
@@ -49,12 +49,12 @@ type ProcessInfo struct {
 }
 
 type Process struct {
-	Info     ProcessInfo
-	spec     ProcessSpec
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	logBuf   *ringBuffer
-	mu       sync.RWMutex
+	Info   ProcessInfo
+	spec   ProcessSpec
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+	logBuf *ringBuffer
+	mu     sync.RWMutex
 }
 
 // Supervisor manages a set of child processes by id.
@@ -311,11 +311,11 @@ func waitReady(ctx context.Context, host string, port int, timeout time.Duration
 // ---- ring buffer for log lines ----
 
 type ringBuffer struct {
-	mu    sync.Mutex
-	buf   []string
-	pos   int
-	full  bool
-	cap   int
+	mu   sync.Mutex
+	buf  []string
+	pos  int
+	full bool
+	cap  int
 }
 
 func newRingBuffer(capacity int) *ringBuffer {

@@ -31,9 +31,9 @@ type Entry struct {
 type SourceSpec struct {
 	Type       string `yaml:"type"` // ollama | huggingface | file
 	Repo       string `yaml:"repo,omitempty"`
-	File       string `yaml:"file,omitempty"`        // specific file within an HF repo (for GGUF)
+	File       string `yaml:"file,omitempty"` // specific file within an HF repo (for GGUF)
 	OllamaName string `yaml:"ollama_name,omitempty"`
-	Path       string `yaml:"path,omitempty"`        // local filesystem path (for GGUF / safetensors)
+	Path       string `yaml:"path,omitempty"` // local filesystem path (for GGUF / safetensors)
 }
 
 // ShardingSpec is set when a model is too large for any single node and must
@@ -43,9 +43,9 @@ type SourceSpec struct {
 type ShardingSpec struct {
 	Required        bool   `yaml:"required"`
 	DefaultShards   int    `yaml:"default_shards"`
-	Engine          string `yaml:"engine"`            // "llamacpp" (only supported in v0.4)
-	RPCPortBase     int    `yaml:"rpc_port_base"`     // workers bind rpc-server to this + shard index
-	CoordinatorPort int    `yaml:"coordinator_port"`  // coordinator binds llama-server to this
+	Engine          string `yaml:"engine"`           // "llamacpp" (only supported in v0.4)
+	RPCPortBase     int    `yaml:"rpc_port_base"`    // workers bind rpc-server to this + shard index
+	CoordinatorPort int    `yaml:"coordinator_port"` // coordinator binds llama-server to this
 }
 
 // HardwareSpec describes the minimum hardware a model needs to run reasonably.

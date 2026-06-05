@@ -16,15 +16,15 @@ import (
 
 // Config is the full runtime configuration for a Flock node.
 type Config struct {
-	Listen      string         `yaml:"listen"`
-	ExternalURL string         `yaml:"external_url"`
-	DataDir     string         `yaml:"data_dir"`
-	LogLevel    string         `yaml:"log_level"`
-	CatalogDir  string         `yaml:"catalog_dir"`
-	Storage     StorageConfig  `yaml:"storage"`
-	Auth        AuthConfig     `yaml:"auth"`
-	Engine      EngineConfig   `yaml:"engine"`
-	Router      RouterConfig   `yaml:"router"`
+	Listen      string        `yaml:"listen"`
+	ExternalURL string        `yaml:"external_url"`
+	DataDir     string        `yaml:"data_dir"`
+	LogLevel    string        `yaml:"log_level"`
+	CatalogDir  string        `yaml:"catalog_dir"`
+	Storage     StorageConfig `yaml:"storage"`
+	Auth        AuthConfig    `yaml:"auth"`
+	Engine      EngineConfig  `yaml:"engine"`
+	Router      RouterConfig  `yaml:"router"`
 }
 
 type StorageConfig struct {
@@ -52,11 +52,11 @@ type RouterConfig struct {
 }
 
 type FallbackConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	AnthropicURL  string `yaml:"anthropic_url"`
-	OpenAIURL     string `yaml:"openai_url"`
-	AnthropicKey  string `yaml:"-"` // populated from env at runtime
-	OpenAIKey     string `yaml:"-"` // populated from env at runtime
+	Enabled      bool   `yaml:"enabled"`
+	AnthropicURL string `yaml:"anthropic_url"`
+	OpenAIURL    string `yaml:"openai_url"`
+	AnthropicKey string `yaml:"-"` // populated from env at runtime
+	OpenAIKey    string `yaml:"-"` // populated from env at runtime
 }
 
 // Default returns a Config populated with safe defaults for a single-node setup.
