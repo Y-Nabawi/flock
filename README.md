@@ -364,53 +364,61 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
+Flock ships a small curated catalog of models that have been smoke-tested against the shipping engines. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
 
+### Shipped catalog (smoke-tested, in `catalog/*.yaml`)
 
-Flock ships a curated catalog so users don't have to choose AWQ vs GPTQ vs GGUF. Any HuggingFace repo also works via `flock model add hf:owner/repo`.
+#### Coding agents (Qwen 2.5 Coder family)
 
-### Chat / agent
+| Catalog ID | Backing model | Quant | Min RAM | Engines | Notes |
+|---|---|---|---|---|---|
+| `qwen-coder-7b` | Qwen2.5-Coder-7B-Instruct | Q4_K_M | 6 GB | ollama, llamacpp, mlx | Local Cursor; runs on an M2 8 GB |
+| `qwen-coder-14b` | Qwen2.5-Coder-14B-Instruct | Q4_K_M | 12 GB | ollama, llamacpp, mlx | Best balance for most Macs |
+| `qwen-coder-32b` | Qwen2.5-Coder-32B-Instruct | Q4_K_M | 24 GB | ollama, llamacpp, vllm | Closest open match to Claude/GPT on code |
 
-| Catalog ID | Backing model | Quant | RAM/VRAM | Strengths |
+#### General reasoning (Qwen 3)
+
+| Catalog ID | Backing model | Quant | Min RAM | Engines |
 |---|---|---|---|---|
-| `qwen3-72b` | Qwen3-72B-Instruct | AWQ | 42 GB | Strong all-rounder, agent-capable |
-| `qwen3-coder` | Qwen3-Coder-30B-A3B | AWQ | 20 GB | Best single-GPU coding agent |
-| `qwen3-coder-large` | Qwen3-Coder-480B-A35B | Q4 | ~280 GB | Frontier open coding agent |
-| `llama-3.3` | Llama-3.3-70B-Instruct | AWQ | 42 GB | Broad ecosystem support |
-| `deepseek-v3` | DeepSeek-V3 | Q4 | ~380 GB | Frontier general quality |
-| `deepseek-r1-distill` | R1-Distill-Qwen-32B | AWQ | 20 GB | Reasoning on one GPU |
-| `glm-4.6` | GLM-4.6 | Q4 | varies | Strong tool use |
+| `qwen3-8b` | Qwen3-8B-Instruct | Q4_K_M | 8 GB | ollama, llamacpp |
+| `qwen3-14b` | Qwen3-14B-Instruct | Q4_K_M | 12 GB | ollama, llamacpp |
 
-### Coding completion (low latency)
+#### Reasoning / thinking (DeepSeek)
 
-| Catalog ID | Backing model | Quant | RAM/VRAM |
-|---|---|---|---|
-| `qwen-coder-7b` | Qwen2.5-Coder-7B | Q4 | 5 GB |
-| `qwen-coder-14b` | Qwen2.5-Coder-14B | Q4 | 9 GB |
-| `qwen-coder-32b` | Qwen2.5-Coder-32B | Q4 | 20 GB |
-| `starcoder2-15b` | StarCoder2-15B | Q4 | 10 GB |
-| `granite-code-8b` | Granite-Code-8B | Q4 | 5 GB |
+| Catalog ID | Backing model | Quant | Min RAM | Engines |
+|---|---|---|---|---|
+| `deepseek-r1-8b` | DeepSeek-R1-Distill-Llama-8B | Q4_K_M | 12 GB | ollama, vllm, llamacpp |
 
-### Small / fast
+#### Small / smoke-test (Llama 3.2)
 
-`llama-3.2-3b` · `qwen3-4b` · `phi-4-mini` · `gemma-3-4b`
+| Catalog ID | Backing model | Quant | Min RAM | Engines |
+|---|---|---|---|---|
+| `llama-3.2-1b` | Llama-3.2-1B-Instruct | Q4_K_M | 2 GB | ollama, llamacpp |
+| `llama-3.2-3b` | Llama-3.2-3B-Instruct | Q4_K_M | 4 GB | ollama, llamacpp |
 
-### Vision
+#### Sharded (multi-machine, via llama.cpp-RPC)
 
-`qwen2.5-vl-7b` · `qwen2.5-vl-72b` · `llama-3.2-vision-11b` · `pixtral-12b` · `gemma-3-12b`
+| Catalog ID | Backing model | Quant | Combined RAM | Notes |
+|---|---|---|---|---|
+| `llama-3.3-70b-sharded` | Llama-3.3-70B-Instruct | Q4_K_M | 48 GB across ≥2 workers | Manual GGUF download + `flock shard create` |
 
-### Embeddings & rerank (for RAG)
+### Proxied (paid APIs — shipped, works today)
 
-`bge-m3` · `bge-reranker-v2` · `nomic-embed-text-v2` · `qwen3-embedding`
+When a request's model name matches one of these, Flock proxies to the upstream vendor with **your** API key (env-configured) and logs the call as usage like any other request:
 
-### Speech
+- **Anthropic upstream**: any `claude-*` model id
+- **OpenAI upstream**: `gpt-*`, `o1*`, `o3*`, `o4*` model ids
 
-`whisper-large-v3` · `whisper-turbo` · `parakeet`
+Routing logic lives in `internal/api/egress.go`; vendor detection in `internal/router/router.go`.
 
-### Proxied (paid APIs)
+### Roadmap — model families not yet in catalog
 
-When a request's model name matches one of these, Flock proxies to the upstream vendor and logs the call:
+These work today via `flock model add hf:owner/repo` but don't have curated YAML entries with hardware specs:
 
-`claude-opus-4-7` · `claude-sonnet-4-6` · `gpt-4o` · `gpt-4-turbo` · `o3` · `gemini-2-flash` · `gemini-2-pro`
+- **Larger general / agent models** — Qwen3-72B, Llama-3.3-70B (non-sharded), DeepSeek-V3, GLM-4.6, Qwen3-Coder-30B/480B → planned for **M4-T06** (catalog expansion to top 30 models).
+- **Vision (image input)** — Qwen2.5-VL, Llama-3.2-Vision, Pixtral, Gemma-3 → engine support and API path land in **M4-T03**.
+- **Embeddings + rerank (for RAG)** — `/v1/embeddings` endpoint not shipped; tracked as **M4-T05**.
+- **Speech / transcription** — `/v1/audio/transcriptions` not shipped; tracked as **M4-T04**.
 
 ---
 
