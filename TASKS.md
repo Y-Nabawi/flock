@@ -19,13 +19,33 @@ For user-facing docs see [README.md](README.md). For design rationale see [ARCHI
 
 ### What's still open
 
-- **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers.
+These are the gaps between marketing copy and what the binary actually does today. Anything claimed on the website or README must either map to shipped code or appear here.
+
+**Networking / cluster**
+
+- **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers. (tracked as M5-T09 below)
+- **NetBird mesh backend** — same shape as Tailscale, different overlay; deferred to v1.0. (tracked as M5-T10)
 - **Shard crash recovery** — sharding auto-orchestration ships in v0.4, but if a worker's `rpc-server` dies mid-stream, the model goes unavailable until the admin re-runs `flock shard create`. v0.5 should add a watcher that restarts exited shards.
 - **Coordinator on a worker** — today the coordinator (`llama-server`) always runs on the leader. v0.5 should allow it to run on the strongest worker, especially when the leader has weak hardware.
+- **Auto-rebalancing sharding** — shard count is currently picked by the admin (`flock shard create <model> <N>`). v1.0 should pick `N` automatically from worker count, model size, and free VRAM. (tracked as M5-T11)
 - **Automatic GGUF distribution** — for sharded models the GGUF must already be on the leader; v0.5 should auto-download from HF or stream from the leader to workers as needed.
+
+**API surface**
+
+- **Embeddings endpoint** — `/v1/embeddings` not shipped. (tracked as M4-T05)
+- **Anthropic extended thinking** — `/v1/messages` accepts text + tool_use blocks; `thinking` blocks not yet supported. (tracked as M4-T12)
+- **Anthropic computer use** — `computer_20241022` / `bash_20241022` / `text_editor_20241022` tool types not yet handled. (tracked as M4-T13)
+- **Vision (OpenAI + Anthropic image inputs)** — text-only today. (tracked as M4-T03)
+- **Whisper transcription** — `/v1/audio/transcriptions` not shipped. (tracked as M4-T04)
+
+**Security / auth**
+
 - **OIDC** for the web UI — currently the UI takes a pasted admin key.
 - **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth.
-- **Vision, Whisper, LoRA, live model migration** — all v0.4.
+
+**Operations / hardware**
+
+- **LoRA, live model migration** — both v0.4. (M4-T02, M4-T07)
 - **Postgres backend** for HA control plane — v1.0.
 - **AMD ROCm engine path** — v1.0.
 
@@ -617,6 +637,18 @@ Goal: launch publicly. Quality bar high enough to keep stars and adopt PRs.
 - Owner: Marketing/Docs · Effort: S · Depends on: M4-T09, M4-T10, M3-T18
 - Acceptance: Posts queued and published in same hour; team monitors comments first 24 hours.
 
+### M4-T12 — Anthropic extended thinking blocks
+
+- Owner: BE · Effort: M · Depends on: M3-T16
+- Files: `internal/api/anthropic.go`
+- Acceptance: `/v1/messages` accepts and returns `thinking` blocks in request/response; engines that don't natively reason are gracefully no-op'd (the response just omits the block). Test: Claude Code's extended-thinking flow round-trips through Flock without errors.
+
+### M4-T13 — Anthropic computer use tool blocks
+
+- Owner: BE · Effort: M · Depends on: M4-T12
+- Files: `internal/api/anthropic.go`
+- Acceptance: `/v1/messages` parses `computer_20241022`, `bash_20241022`, `text_editor_20241022` tool definitions and passes them through to engines that support tool-calling; tool_result blocks of these shapes round-trip correctly. Local engines without computer-use capability return an explicit "not supported by this model" error rather than silently dropping the tool.
+
 ---
 
 ## Milestone 5 — v1.0 production
@@ -670,6 +702,24 @@ Goal: production-grade for orgs running this in serious environments.
 - Owner: DevOps · Effort: S · Depends on: M5-T06
 - Files: tag, release notes
 - Acceptance: Tag pushed, binaries shipped, Homebrew bumped, blog post live.
+
+### M5-T09 — Tailscale `tsnet` mesh backend
+
+- Owner: BE · Effort: M · Depends on: M2-T02
+- Files: `internal/mesh/tailscale.go`
+- Acceptance: Workers joining over a Tailscale tailnet auto-discover the leader and register without manual IP config; cross-network (multi-LAN) cluster works end-to-end with one worker on a different physical network than the leader.
+
+### M5-T10 — NetBird mesh backend
+
+- Owner: BE · Effort: M · Depends on: M5-T09
+- Files: `internal/mesh/netbird.go`
+- Acceptance: Same UX as Tailscale backend, but routed through a NetBird overlay (self-hostable). Documented in deployment guide.
+
+### M5-T11 — Auto-rebalancing sharded models
+
+- Owner: BE · Effort: L · Depends on: M2.5 sharding code, M5-T03
+- Files: `internal/scheduler/sharding.go`, `internal/scheduler/placement.go`
+- Acceptance: `flock shard create <model>` (no explicit N) computes the right shard count from worker count, model size in GB, and free VRAM per worker; reshards (drains + re-creates) if a worker joins or leaves and the existing split is no longer optimal. Manual override (`--shards N`) still respected.
 
 ---
 

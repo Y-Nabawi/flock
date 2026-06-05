@@ -1,8 +1,10 @@
 # Flock
 
-> **One endpoint. Every LLM. Your hardware.**
+> **Self-hosted AI for your team. One endpoint. Your hardware.**
 >
-> A self-hosted, open-source platform that orchestrates open-weight LLMs (Qwen, Llama, DeepSeek, …) across a cluster of your own machines — Mac, Linux/NVIDIA, or mixed — and exposes them as a single API that is drop-in compatible with both OpenAI and Anthropic.
+> Flock is the **self-hosted control plane for LLMs**. One Go binary turns your Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user keys, daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the **OpenAI** and **Anthropic** APIs.
+>
+> Engine-agnostic: bring **Ollama**, **vLLM**, **MLX-LM**, or **llama.cpp-RPC**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware, shard a giant model across several machines via llama.cpp-RPC, and transparently fall back to paid Claude / GPT only when you choose.
 >
 > Point Cursor, Claude Code, Aider, Continue, or any OpenAI/Anthropic SDK at Flock. It just works.
 
@@ -10,41 +12,39 @@
 
 ## 🚀 Try it in 60 seconds
 
-Pick your platform — 4 commands each.
+Flock is engine-agnostic. The quickest path uses **Ollama** as the local engine — but vLLM, MLX-LM, and llama.cpp-RPC all work. See [Choose your engine](#choose-your-engine) below for the alternatives.
 
 ### 🍎 macOS (Apple Silicon — M1/M2/M3/M4)
 
 ```bash
-# 1. install Ollama (use the cask — plain `brew install ollama` is broken)
-brew install --cask ollama
-open -a Ollama
-
-# 2. install Flock
+# 1. install Flock
 curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # if the installer says so
 
-# 3. add install dir to PATH if the installer says so
-export PATH="$HOME/.local/bin:$PATH"
+# 2. install an engine (pick one) — Ollama is the simplest default
+brew install --cask ollama && open -a Ollama
+# alternatives: pip install mlx-lm  ·  or run llama.cpp's llama-server  ·  or run vLLM in Docker
 
-# 4. start Flock with a tiny model (~1 GB, fast download)
+# 3. start Flock with a tiny model (~1 GB, fast download)
 FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
 ```
 
 ### 🐧 Linux (x86_64 or arm64)
 
 ```bash
-# 1. install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-sudo systemctl enable --now ollama
-
-# 2. install Flock
+# 1. install Flock
 curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
-
-# 3. add install dir to PATH if needed
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
-# 4. start Flock with a tiny model (~1 GB, fast download)
+# 2. install an engine (pick one) — Ollama is the simplest default
+curl -fsSL https://ollama.com/install.sh | sh && sudo systemctl enable --now ollama
+# alternatives: vLLM in Docker for NVIDIA  ·  llama.cpp's llama-server  ·  MLX-LM (Apple Silicon only)
+
+# 3. start Flock with a tiny model (~1 GB, fast download)
 FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
 ```
+
+> 💡 Not sure which engine to install? Run `flock doctor` after step 1 — it inspects your hardware and tells you the single command to run.
 
 ### What you should see (both platforms)
 

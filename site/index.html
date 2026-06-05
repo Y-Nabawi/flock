@@ -6,22 +6,22 @@
   <meta name="theme-color" content="#0f172a" />
 
   <!-- Primary SEO -->
-  <title>Flock — Self-Hosted LLM Gateway for Teams · OpenAI + Anthropic compatible · Mac &amp; Linux</title>
-  <meta name="description" content="Flock is an open-source self-hosted LLM gateway. Run Ollama, vLLM, or MLX on your own machines and expose them via OpenAI- and Anthropic-compatible APIs. Cursor, Claude Code, Aider, and any SDK just work. Multi-user keys, quotas, audit log, multi-machine routing, and llama.cpp sharding orchestration in a single Go binary. Apache-2.0." />
-  <meta name="keywords" content="self-hosted LLM, LLM gateway, Ollama, Claude Code local model, OpenAI API self-hosted, Anthropic API self-hosted, LiteLLM alternative, exo alternative, LocalAI, multi-machine inference, llama.cpp RPC, model sharding, llm router, vllm, mlx-lm, Apple Silicon, Mac Mini cluster, on-prem ai" />
+  <title>Flock — Self-Hosted Control Plane for LLMs · Multi-machine, team-ready, OpenAI + Anthropic compatible</title>
+  <meta name="description" content="Flock is the self-hosted control plane for LLMs. Turn your Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user API keys, daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the OpenAI and Anthropic APIs. Engine-agnostic: runs Ollama, vLLM, MLX, or llama.cpp-RPC. Single Go binary. Apache-2.0." />
+  <meta name="keywords" content="self-hosted LLM, LLM control plane, LLM gateway for teams, private AI cluster, multi-machine LLM, OpenAI API self-hosted, Anthropic API self-hosted, Claude Code self-hosted, LiteLLM alternative, exo alternative, LocalAI alternative, llama.cpp RPC sharding, on-prem AI, model orchestration, per-user API keys, AI quota audit, vllm, mlx-lm, ollama orchestration, Apple Silicon cluster" />
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large" />
   <link rel="canonical" href="https://flockllm.com/" />
   <meta name="author" content="Flock contributors" />
 
   <!-- Open Graph / Twitter -->
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Flock — Self-Hosted LLM Gateway for Teams" />
-  <meta property="og:description" content="One Go binary. OpenAI- and Anthropic-compatible. Runs Ollama, vLLM, MLX. Multi-user keys, quotas, audit log, multi-machine routing, llama.cpp sharding. Apache-2.0." />
+  <meta property="og:title" content="Flock — Self-Hosted Control Plane for LLMs" />
+  <meta property="og:description" content="Turn your own Macs and Linux boxes into a private LLM cluster. Multi-machine routing, per-user keys, daily quotas, audit log, and one endpoint that speaks both OpenAI and Anthropic APIs. Engine-agnostic. Single Go binary. Apache-2.0." />
   <meta property="og:url" content="https://flockllm.com/" />
   <meta property="og:site_name" content="Flock" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Flock — Self-Hosted LLM Gateway" />
-  <meta name="twitter:description" content="Ollama with an org layer + Anthropic-API compatibility. Open source." />
+  <meta name="twitter:title" content="Flock — Self-Hosted Control Plane for LLMs" />
+  <meta name="twitter:description" content="The missing control plane for self-hosted LLMs: multi-machine routing, per-user keys, quotas, audit, OpenAI + Anthropic APIs. Open source." />
 
   <!-- Tailwind via CDN (no build step). -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -46,7 +46,7 @@
     "name": "Flock",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "macOS, Linux",
-    "description": "Self-hosted LLM gateway with OpenAI- and Anthropic-compatible APIs. Orchestrates Ollama, vLLM, and MLX-LM across one or many machines.",
+    "description": "Self-hosted control plane for LLMs. Multi-machine routing, per-user keys, daily quotas, audit log, OpenAI- and Anthropic-compatible APIs. Engine-agnostic — orchestrates Ollama, vLLM, MLX-LM, and llama.cpp-RPC across one or many machines.",
     "url": "https://flockllm.com",
     "downloadUrl": "https://github.com/hadihonarvar/flock/releases/latest",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
@@ -66,15 +66,15 @@
         "name": "What is Flock?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Flock is a self-hosted LLM gateway. It runs on your own Mac or Linux machines, talks to Ollama (or vLLM, MLX) underneath, and exposes those models through APIs that are drop-in compatible with OpenAI and Anthropic — so Cursor, Claude Code, Aider, and any OpenAI/Anthropic SDK just work."
+          "text": "Flock is the self-hosted control plane for LLMs. One Go binary turns your Macs and Linux boxes into a private inference cluster, exposes one endpoint that speaks both the OpenAI and Anthropic APIs, and gives your team the org layer they need — per-user API keys, daily quotas, audit log, and a built-in admin dashboard. Engine-agnostic: pick Ollama, vLLM, MLX, or llama.cpp-RPC as the backend."
         }
       },
       {
         "@type": "Question",
-        "name": "How is Flock different from Ollama?",
+        "name": "How is Flock different from running an inference engine directly?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Ollama is a single-user inference engine. Flock adds the org/team layer on top: per-user API keys, daily quotas, audit log, multi-machine routing, Anthropic-API compatibility (so Claude Code works), and sharding orchestration — all in one Go binary with an embedded web UI."
+          "text": "Engines like Ollama, vLLM, and MLX-LM are single-machine, single-user inference servers. Flock is the layer above them: it routes requests across a fleet of machines, exposes one consistent API (OpenAI + Anthropic) so your tools don't care which engine is underneath, adds per-user keys + quotas + audit log, orchestrates llama.cpp-RPC sharding so a single model can run split across multiple machines, and can transparently fall back to paid Claude/GPT when you choose."
         }
       },
       {
@@ -124,7 +124,7 @@
       <a href="#top" class="flex items-center gap-2 group">
         <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 17l9 5 9-5"/><path d="M3 12l9 5 9-5"/></svg>
         <span class="font-bold tracking-tight text-lg">Flock</span>
-        <span class="text-slate-400 text-xs hidden sm:inline">self-hosted LLM gateway</span>
+        <span class="text-slate-400 text-xs hidden sm:inline">self-hosted control plane for LLMs</span>
       </a>
       <nav class="hidden md:flex items-center gap-6 text-sm">
         <a href="#what" class="text-slate-300 hover:text-white">What it is</a>
@@ -153,21 +153,22 @@
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">no telemetry</span>
           </div>
           <h1 class="mt-5 text-4xl md:text-6xl font-bold tracking-tight leading-tight">
-            One endpoint.<br/>Every LLM.<br/>
-            <span class="text-emerald-400">Your hardware.</span>
+            Self-hosted AI<br/>for your team.<br/>
+            <span class="text-emerald-400">One endpoint. Your hardware.</span>
           </h1>
           <p class="mt-6 text-lg md:text-xl text-slate-300 leading-relaxed">
-            Flock is a <strong class="text-white">self-hosted LLM gateway</strong> that runs on your own Mac or Linux machines.
-            One Go binary exposes <strong class="text-white">OpenAI- and Anthropic-compatible APIs</strong> on top of
-            Ollama / vLLM / MLX, with per-user keys, quotas, audit log, multi-machine routing, and llama.cpp sharding —
-            all behind a single endpoint your team's existing tools already speak.
+            Flock is the <strong class="text-white">self-hosted control plane for LLMs</strong>. One Go binary turns your
+            Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user keys,
+            daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the
+            <strong class="text-white">OpenAI</strong> and <strong class="text-white">Anthropic</strong> APIs.
+            Engine-agnostic: bring Ollama, vLLM, MLX, or llama.cpp-RPC. Fall back to paid Claude/GPT only when you choose.
           </p>
 
           <div class="mt-8 bg-slate-950/70 border border-slate-700 rounded-lg p-4 max-w-2xl">
             <div class="text-xs text-slate-400 uppercase tracking-widest mb-2">Try it in 60 seconds</div>
-            <pre class="font-mono text-sm text-emerald-300 overflow-x-auto leading-relaxed">$ brew install --cask ollama &amp;&amp; open -a Ollama
-$ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
-$ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
+            <pre class="font-mono text-sm text-emerald-300 overflow-x-auto leading-relaxed">$ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+$ flock doctor      <span class="text-slate-500"># tells you the one command to install an engine, if you don't have one</span>
+$ flock up          <span class="text-slate-500"># starts your private LLM gateway, prints your admin API key</span></pre>
           </div>
 
           <div class="mt-8 flex flex-wrap gap-3">
@@ -192,9 +193,11 @@ $ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
         <div class="max-w-3xl">
           <h2 class="text-3xl md:text-4xl font-bold tracking-tight">What Flock does, in plain English</h2>
           <p class="mt-4 text-lg text-slate-600 leading-relaxed">
-            Think of Flock as <strong>"Ollama with an org layer + Claude-Code-compatible API."</strong>
+            Flock is the missing <strong>control plane</strong> for self-hosted LLMs — multi-machine routing, per-user
+            keys, quotas, audit, and a built-in dashboard, all behind one API your existing tools already speak.
             Your team's AI tools talk to <em>one</em> endpoint; Flock decides whether to serve from your own machines
-            (free + private) or transparently fall back to real Claude / GPT (paid, logged).
+            (free + private), shard a giant model across several of them, or transparently fall back to real Claude / GPT
+            (paid, logged) — your call.
           </p>
         </div>
 
@@ -203,7 +206,8 @@ $ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
             <div class="w-10 h-10 bg-emerald-100 text-emerald-700 rounded-lg flex items-center justify-center text-xl">🧠</div>
             <h3 class="mt-4 font-semibold text-lg">Local models, one API</h3>
             <p class="mt-2 text-slate-600 text-sm leading-relaxed">
-              Runs Ollama / vLLM / MLX underneath. Exposes them through
+              Pick the engine that fits your hardware — <strong>Ollama, vLLM, MLX-LM, or llama.cpp-RPC</strong>.
+              Flock exposes whichever one you run through
               <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">/v1/chat/completions</span>
               (OpenAI) and
               <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">/v1/messages</span>
@@ -1302,7 +1306,7 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7l9 5 9-5-9-5z"/><path d="M3 17l9 5 9-5"/><path d="M3 12l9 5 9-5"/></svg>
           Flock
         </div>
-        <p class="leading-relaxed">Self-hosted LLM gateway. One Go binary. Apache-2.0.</p>
+        <p class="leading-relaxed">Self-hosted control plane for LLMs. One Go binary. Apache-2.0.</p>
       </div>
 
       <div>
