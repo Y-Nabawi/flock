@@ -49,6 +49,8 @@ func main() {
 		cmdDoctor(args)
 	case "connect":
 		cmdConnect(args)
+	case "invite":
+		cmdInvite(args)
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
@@ -91,6 +93,7 @@ Commands:
   config edit              Print the editor command to edit config
   connect <client>         Print copy-paste config for a tool (Claude Code, Cursor, …)
   connect --list           List supported clients
+  invite <name>            Create a user-scope token + share card for a teammate
   doctor                   Diagnose common problems
   version                  Print version
   help                     Show this help

@@ -256,7 +256,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    →  Wire up Claude Code:  flock connect claude-code")
 		fmt.Println("    →  Wire up Cursor:       flock connect cursor")
 		fmt.Println("    →  See all clients:      flock connect --list")
-		fmt.Println("    →  Invite a teammate:    flock invite <name>     # coming soon (M3-T21)")
+		fmt.Println("    →  Invite a teammate:    flock invite <name>")
 		fmt.Println()
 		fmt.Println("  Quick test from the shell:")
 		fmt.Printf("    curl %s/v1/chat/completions \\\n", base)
