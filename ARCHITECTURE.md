@@ -2,6 +2,8 @@
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
 
+> **Doc-vs-code currency:** this document describes v0.3 (cross-node routing landed). The internal layout matches `main` as of commit `2dccb48`. If you find a mismatch the code is authoritative — please file an issue and/or PR.
+
 ---
 
 ## Table of contents
@@ -58,34 +60,42 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
                        │
                        ▼  one endpoint, one key
    ┌──────────────────────────────────────────────────┐
-   │  GATEWAY      OpenAI + Anthropic compatible      │
-   │               auth · routing · streaming · log   │
+   │  GATEWAY (leader)                                │
+   │  OpenAI + Anthropic compatible · auth · quotas   │
+   │  egress dispatcher (claude-* / gpt-* → vendor)   │
    └────────────────────┬─────────────────────────────┘
                         │
-        ┌───────────────┼──────────────────┐
-        ▼               ▼                  ▼
-   ┌────────────┐ ┌────────────┐    ┌──────────────────┐
-   │ Worker A   │ │ Worker B   │    │ External APIs    │
-   │ Linux+GPU  │ │ Mac Mini   │    │ (Claude, GPT…    │
-   │ vLLM       │ │ MLX-LM     │    │  fallback)       │
-   └────────────┘ └────────────┘    └──────────────────┘
-        ▲               ▲
-        │               │  heartbeats, assignments
-   ┌────┴───────────────┴──────────────────────────────┐
-   │  CONTROL PLANE                                    │
-   │  node registry · model registry · scheduler · UI  │
-   └───────────────────────────────────────────────────┘
-                        ▲
-                        │ embedded Tailscale mesh
-                        │ (mTLS, NAT-traversed)
+   ┌────────────────────▼─────────────────────────────┐
+   │  ROUTER  (internal/router)                       │
+   │  model → placements → least-loaded node          │
+   │  caches remote engine handles per node           │
+   └────┬───────────────────────┬─────────────────────┘
+        │ local                 │ remote (via worker HTTP)
+        ▼                       ▼
+   ┌─────────────┐   ┌─────────────────────┐   ┌──────────────────┐
+   │ leader's    │   │ Worker A (Mac Mini) │   │ Worker B (NVIDIA)│
+   │ local       │   │  agent.Server       │   │  agent.Server    │
+   │ engine      │   │  → local Ollama     │   │  → local vLLM    │
+   │ (Ollama)    │   │  (token-auth'd)     │   │  (token-auth'd)  │
+   └─────────────┘   └─────────────────────┘   └──────────────────┘
+                              ▲                         ▲
+                              │  heartbeat every 5s     │
+                              │  carries loaded_models  │
+   ┌──────────────────────────┴─────────────────────────┴──────────┐
+   │  CONTROL PLANE                                                │
+   │  node registry · model placements · usage · audit · web UI    │
+   └───────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ mesh: LAN (v0.3) or
+                              │ embedded Tailscale (v0.4)
 ```
 
 Two distinct planes:
 
-- **North-south** — clients → gateway → worker. Data plane. Latency-sensitive. Stateless beyond per-connection KV cache.
-- **East-west** — control plane ↔ agents. Cluster management. Lower volume. Pub/sub over NATS.
+- **North-south** — clients → gateway → router → engine (local or remote). Data plane. Latency-sensitive. Per-request work; KV caches live in the chosen engine.
+- **East-west** — control plane ↔ agents. Cluster management. Lower volume. Direct HTTP today (NATS pub/sub was scoped for sharded events but is not in v0.3).
 
-A control-plane outage does **not** kill in-flight requests. The gateway can keep proxying to known workers using a cached routing table.
+A control-plane DB outage does **not** kill in-flight requests — the router keeps using its in-memory cache of node addresses + worker tokens. If a node disappears mid-stream, the next request will surface the routing error; the cache is rebuilt from the placements table once the DB is back.
 
 ---
 
@@ -95,10 +105,10 @@ One binary, four modes determined by subcommand:
 
 | Mode | What runs in-process |
 |---|---|
-| `flock up` (leader) | Gateway · Control plane · Web UI · Local agent · Embedded NATS · Embedded SQLite · `tsnet` |
-| `flock up` (worker — set by env / `node.yaml`) | Local agent · `tsnet` · NATS client |
-| `flock <cmd>` (CLI) | One-shot HTTP client against the leader |
-| `flock doctor` | Stand-alone diagnostics |
+| `flock up` | **Leader**: HTTP gateway · Router · Control plane · Web UI · embedded SQLite · local engine adapter |
+| `flock join <url>?token=…` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
+| `flock <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
+| `flock doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
 
 The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/flock/main.go`.
 
@@ -120,6 +130,81 @@ The leader and worker share the same internal packages; the difference is which 
 - Close mesh
 - Flush metrics, traces, logs
 - Close DB
+
+---
+
+## Cross-node routing (the v0.3 core)
+
+The Router is what makes "leverage multiple machines" mean something. It implements `engines.Engine`, so handlers don't know whether a request is served locally or proxied — they just call `h.Engine.Chat(ctx, req)`.
+
+```
+   Handler.Chat(req)
+        │
+        ▼
+   Router.pick(model)              ← internal/router/router.go
+        │
+        ├─ store.Placements.GetByNode("local", model) → has it? → return local engine
+        │
+        └─ store.Placements.GetByModel(model)
+                │
+                ▼
+           filter: status == "ready"
+                │
+                ▼
+           sort by router.inflight[nodeID] ASC
+                │
+                ▼
+           pick first → store.Nodes.Get(id) → build/cached VLLM driver
+                                              pointing at node.Address
+                                              with node.WorkerToken
+                ▼
+           return remoteEngine
+```
+
+### Selection policy (v0.3)
+
+1. **Local first.** If the leader's local engine has the model, use it. Lowest latency, no network hop.
+2. **Least-loaded worker** otherwise. The router maintains an in-process `map[nodeID]int` of in-flight request counts and picks the lowest.
+3. **Fall back to local** if no node has the model. Local will return a clear "model not found" the client can act on.
+
+The router's wrapping of the engine channel decrements the in-flight counter when the upstream stream closes, so counts stay accurate without explicit acknowledgement from the caller.
+
+### Worker HTTP server (`internal/agent/server.go`)
+
+Each worker runs a thin OpenAI-compatible HTTP server bound to the address it reported at registration time. The server has three routes:
+
+| Route | Behavior |
+|---|---|
+| `GET /healthz` | Calls `Engine.Health(ctx)`; returns 200 if the local engine is reachable. |
+| `GET /v1/models` | Calls `Engine.List(ctx)` and emits the OpenAI `{"object":"list","data":[…]}` shape. |
+| `POST /v1/chat/completions` | Decodes the OpenAI request, calls `Engine.Chat(ctx, req)`, re-emits as SSE (stream=true) or aggregated JSON (stream=false). |
+
+Auth is token-only: the request must carry `Authorization: Bearer <worker_token>`. The worker_token is established at registration and stored on the leader's `nodes` row.
+
+### Placements (`internal/store/sqlite.go → model_placements`)
+
+```sql
+CREATE TABLE model_placements (
+    node_id    TEXT NOT NULL,    -- "local" for the leader, or a worker node id
+    model_id   TEXT NOT NULL,    -- the engine-native model id (e.g. "llama3.2:1b")
+    status     TEXT NOT NULL,    -- "ready" | "loading" | "error"
+    last_seen  INTEGER NOT NULL,
+    PRIMARY KEY (node_id, model_id)
+);
+CREATE INDEX idx_placements_model ON model_placements(model_id);
+```
+
+Worker heartbeats carry `loaded_models`; the leader calls `PlacementStore.ReplaceForNode(nodeID, …)` to reconcile atomically every 5s. Local placements (`node_id="local"`) are populated by `cmd_model.go` on add and by `cmd_up.go` on startup (it lists the leader's local engine).
+
+### Sharding (`internal/engines/llamacpp_rpc.go`)
+
+For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets the model be split across multiple nodes. v0.3 ships:
+
+- ✅ A `llamacpp` engine driver that talks OpenAI-compat to a `llama-server` already configured with `--rpc <backend list>`
+- ❌ Automatic launch of `rpc-server` processes on workers (the user does this manually for v0.3)
+- ❌ Automatic shard placement decisions (the scheduler doesn't yet know "this model wants N shards")
+
+The driver file's header comment documents the manual workflow. v0.4 will add a Scheduler that promotes a `sharded: true` catalog entry into auto-launched `rpc-server` processes on workers + a `llama-server` on the coordinator.
 
 ---
 
@@ -633,19 +718,17 @@ flock/
 │
 ├── internal/
 │   ├── controlplane/          # leader HTTP server + admin API
-│   ├── agent/                 # per-node loop
-│   ├── api/                   # OpenAI + Anthropic adapters
-│   ├── router/                # request routing logic
-│   ├── scheduler/             # model placement decisions
-│   ├── mesh/                  # tsnet wrapper, fallback backends
-│   ├── engines/               # vllm.go, mlx.go, llamacpp.go, ollama.go
-│   ├── models/                # HF puller, catalog parser, registry
-│   ├── store/                 # SQLite + Postgres backends
-│   ├── auth/                  # API keys, OIDC
+│   ├── agent/                 # per-node loop AND worker HTTP server (server.go)
+│   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
+│   ├── router/                # router.go — model → node dispatch, least-loaded
+│   ├── mesh/                  # mesh.go — LAN backend; tsnet interface for v0.4
+│   ├── engines/               # ollama.go, vllm.go, mlx.go, llamacpp_rpc.go
+│   ├── models/                # catalog parser, auto-pick
+│   ├── store/                 # SQLite backend (Postgres v1.0)
+│   ├── auth/                  # API keys, scope middleware
 │   ├── config/                # YAML + env loader
 │   ├── metrics/               # Prometheus declarations
-│   ├── tracing/               # OTel setup
-│   └── ui/                    # //go:embed web/dist
+│   └── ui/                    # embed.go + index.html (single embedded page)
 │
 ├── web/                       # Next.js UI
 │   ├── package.json

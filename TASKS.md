@@ -4,16 +4,27 @@ Concrete task breakdown for the team building Flock. Each milestone ships a usab
 
 For user-facing docs see [README.md](README.md). For design rationale see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current shipped state (as of this drop)
+## Current shipped state (as of commit `2dccb48`)
 
-- **M0 — foundations**: done (Go module, Makefile, gitignore, LICENSE, OSS docs, web embed scaffold).
-- **M1 — single-node MVP**: done (CLI, OpenAI API + streaming, Ollama driver, hardware detect, catalog, install.sh; web UI shipped as a single embedded HTML page rather than the Next.js scaffold planned).
-- **M2 — multi-node**: code-complete except the Tailscale `tsnet` backend (LAN backend ships instead; tsnet interface is defined). Anthropic adapter live, Claude Code verified-by-construction. vLLM + MLX drivers ship. Node register/heartbeat live. Cross-node *inference routing* (leader → worker engine) deferred.
-- **M3 — multi-tenant + observability**: per-user keys with scopes/quotas/audit, usage metering, Prometheus metrics, hybrid fallback to Anthropic + OpenAI — all live. OIDC deferred.
-- **M4 — polish**: minimal embedded UI shipped; LoRA / vision / Whisper / live migration deferred to v0.4.
-- **Release tooling**: CI workflow, GoReleaser config, Homebrew formula, install.sh — all live.
+**Verified build**: `go build ./cmd/flock` clean on go 1.26 / darwin-arm64. `go vet ./...` clean. `flock up` boots, prints admin key, gateway responds.
 
-What's still open: tsnet mesh, OIDC, cross-node inference routing, vision endpoint, embedded Whisper, LoRA adapter loading, full Postgres backend for HA, AMD ROCm path.
+- **M0 — foundations**: ✅ done.
+- **M1 — single-node MVP**: ✅ done. CLI, OpenAI API + streaming, Ollama driver, hardware detect, catalog, install.sh. Web UI shipped as a single embedded HTML page (Tailwind via CDN) rather than the Next.js scaffold originally planned.
+- **M2 — multi-node**: ✅ **routing now ships**. `flock join` registers + starts a worker HTTP server. Heartbeat carries loaded models; leader reconciles placements. **Router** picks node per request (local-preferred, then least-loaded worker). Anthropic adapter live. vLLM + MLX + llama.cpp-RPC drivers ship. Tailscale `tsnet` mesh still deferred — LAN backend ships in v0.3.
+- **M3 — multi-tenant + observability**: ✅ done. Per-user keys / scopes / daily quotas / audit log / usage metering / Prometheus metrics / hybrid fallback to Anthropic + OpenAI. OIDC deferred to v0.4.
+- **M4 — polish**: ✅ minimal embedded UI shipped. LoRA / vision / Whisper / live migration deferred to v0.4.
+- **Release tooling**: ✅ CI workflow, GoReleaser config, Homebrew formula, install.sh.
+- **Fixes**: ✅ 15 code-review findings addressed in commit `70ad076` (engine routing per backend, streaming goroutine leaks, audit log content, vLLM/MLX token accounting, Anthropic tool-block preservation, agent 401/404 handling, more).
+
+### What's still open
+
+- **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers.
+- **Auto-orchestration of sharding** — driver ships (`llamacpp_rpc.go`), but the user still launches `rpc-server` on workers + `llama-server --rpc <list>` on the coordinator manually. v0.4 scheduler will automate.
+- **OIDC** for the web UI — currently the UI takes a pasted admin key.
+- **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth.
+- **Vision, Whisper, LoRA, live model migration** — all v0.4.
+- **Postgres backend** for HA control plane — v1.0.
+- **AMD ROCm engine path** — v1.0.
 
 ---
 

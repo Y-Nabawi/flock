@@ -8,30 +8,59 @@
 
 | | |
 |---|---|
-| **Status** | Alpha — code-complete for single-node + multi-node + multi-tenant; not yet release-tested |
+| **Status** | Alpha — build-verified on macOS/arm64; single-node verified end-to-end with curl; multi-node routing landed but not yet tested with two physical machines |
 | **License** | Apache 2.0 |
 | **Language** | Go (orchestrator + embedded HTML UI) |
 | **Platforms** | macOS (Apple Silicon), Linux (x86_64, arm64) |
 
-## What's shipped in this drop
+## What's shipped
 
-- ✅ Single binary (`go build ./cmd/flock`) — no Python or Docker required
+### Core (single-node, works today)
+
+- ✅ Single binary (`go build ./cmd/flock` → 23 MB) — no Python or Docker required
 - ✅ **OpenAI-compatible** API (`/v1/chat/completions`, `/v1/models`) — Cursor, Aider, Continue, Zed, OpenAI SDK
 - ✅ **Anthropic-compatible** API (`/v1/messages`, `/v1/messages/count_tokens`) — Claude Code, Anthropic SDK
-- ✅ Streaming (SSE) for both protocols
-- ✅ **Hybrid fallback** — requests for `claude-*` or `gpt-*` transparently proxy to the real Anthropic / OpenAI API (set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
-- ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**
-- ✅ **Multi-tenant**: per-user API keys with scopes (admin / user / node), daily token quotas, audit log
-- ✅ **Usage metering**: every request recorded; `/admin/v1/usage/recent` + dashboard
-- ✅ **Prometheus** metrics at `/metrics`
-- ✅ **Multi-node**: `flock token create --node` + `flock join` + heartbeat loop (LAN backend; Tailscale backend interface defined for v0.3)
-- ✅ Embedded **web UI** (single HTML, Tailwind via CDN) — dashboard, nodes, models, usage, audit, settings
+- ✅ Streaming (SSE) for both protocols, with proper client-disconnect handling (no goroutine leaks)
+- ✅ **Hybrid fallback** — requests for `claude-*` or `gpt-*` transparently proxy to the real Anthropic / OpenAI API (set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`); protocol mismatch (e.g., Claude model on OpenAI route) returns a clear 400
+- ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (incl. RPC mode)
+- ✅ Engine endpoints + API keys configurable per engine via env (`FLOCK_VLLM_ENDPOINT`, `VLLM_API_KEY`, …)
 - ✅ Hardware auto-detection (mac + linux + NVIDIA) and auto-pick a default model
-- ✅ Model catalog with curated entries (Llama 3.2, Qwen2.5-Coder)
-- ✅ GitHub Actions CI, GoReleaser release pipeline, Homebrew formula
-- ⚠️ Tailscale mesh backend (`tsnet` integration) — interface defined, implementation deferred to v0.3
-- ⚠️ OIDC for the UI — deferred to v0.3; UI uses API key sign-in for now
-- ⚠️ Cross-node inference routing — registration works in v0.2; leader proxying to worker engines lands in v0.3
+- ✅ Catalog with curated model entries (Llama 3.2, Qwen2.5-Coder)
+
+### Multi-node (cross-node routing — landed, untested with 2 real boxes)
+
+- ✅ `flock token create --node` issues a worker join token
+- ✅ `flock join <leader>?token=…` registers + starts a worker HTTP server bound to the LAN/tailnet address
+- ✅ Workers run their own engine (Ollama / vLLM / MLX); leader proxies inference requests to them
+- ✅ **Router** picks the right node per request: local-preferred if the model is loaded locally, otherwise least-loaded worker that has the model
+- ✅ **Heartbeat carries loaded models** every 5s; leader reconciles the placements table automatically
+- ✅ Agent handles auth errors gracefully (401 → exit, 404 → re-register, transient → exponential backoff)
+- ✅ Model sharding driver scaffolded (`llamacpp_rpc.go`) — supports manual `rpc-server` + `llama-server --rpc` setup; auto-orchestration is v0.4
+- ⚠️ Tailscale `tsnet` mesh backend — interface defined; LAN backend ships in v0.3
+
+### Multi-tenant + observability
+
+- ✅ Per-user API keys with scopes (admin / user / node), daily token quotas, audit log
+- ✅ Usage metering — every request recorded with model/protocol/tokens/latency; metrics fire even in dev mode (no key required)
+- ✅ Prometheus metrics at `/metrics`
+- ✅ Embedded web UI (single HTML, Tailwind via CDN) — dashboard, nodes, models, usage, audit, settings
+- ⚠️ OIDC for the UI — deferred to v0.4; UI uses pasted API key for now
+
+### Release + ops
+
+- ✅ GitHub Actions CI workflow
+- ✅ GoReleaser config + release workflow (auto-builds darwin/linux × arm64/amd64, creates Homebrew formula)
+- ✅ Homebrew formula template
+- ✅ install.sh (`curl … | sh`) script — pulls latest from GH Releases when you tag one
+
+### Verified to work
+
+- ✅ `go build ./cmd/flock` — clean on go 1.26 / darwin-arm64
+- ✅ `go vet ./...` — clean
+- ✅ `flock up` boots, bootstraps admin key, starts gateway
+- ✅ `flock up` → `curl /v1/models` returns the auto-picked model
+- ✅ `curl /v1/chat/completions` reaches Ollama and translates errors back as proper OpenAI shape
+- ⚠️ Actual model inference response — Homebrew's `ollama` formula on arm64 is broken (missing internal `llama-server` binary); use `brew install --cask ollama` or `curl -fsSL https://ollama.com/install.sh | sh` for a working Ollama install
 
 **For users**: keep reading this file. **For contributors**: see [ARCHITECTURE.md](ARCHITECTURE.md). **For the dev team**: see [TASKS.md](TASKS.md).
 
@@ -505,6 +534,51 @@ The token is a single-use, time-limited JWT that includes the tailnet auth key. 
 ```bash
 flock node drain <node-id>   # gracefully migrate models off
 flock node remove <node-id>  # forget it
+```
+
+### End-to-end multi-node walkthrough
+
+For a leader + one worker on the same LAN:
+
+```bash
+# === on the leader machine ===
+brew install --cask ollama          # working Ollama (not the broken formula)
+ollama serve &
+flock up                            # bootstraps admin key, starts gateway on :8080
+flock model add llama-3.2-3b        # pulls on the leader's Ollama
+flock token create --node           # prints the worker join token
+
+# === on the worker machine ===
+brew install --cask ollama
+ollama serve &
+flock join http://<leader-host>:8080?token=<token>   # registers + starts worker HTTP server
+flock model add qwen-coder-7b        # pulls on the worker's Ollama (reported back via heartbeat)
+
+# === back on the leader ===
+flock node ls                        # both nodes visible
+# requests for "llama-3.2-3b" stay local
+# requests for "qwen-coder-7b" get proxied to the worker automatically
+
+# === from your laptop ===
+curl http://<leader-host>:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-orc-..." \
+  -d '{"model":"qwen-coder-7b","messages":[{"role":"user","content":"hi"}]}'
+# served by the worker, transparently
+```
+
+If you want to **shard one large model across multiple machines** (v0.3 manual setup; auto-orchestration is v0.4):
+
+```bash
+# on each worker that will host a shard:
+rpc-server -p 50052
+
+# on the coordinator (the node that exposes the OpenAI surface):
+llama-server -m /path/to/llama-3.3-70b.Q4_K_M.gguf \
+    --rpc worker1.local:50052,worker2.local:50052 \
+    --gpu-layers 999 --port 8080
+
+# then point Flock at it via engine.preferred=llamacpp + FLOCK_MLX_ENDPOINT
+# (the llamacpp driver speaks OpenAI-compat, same shape as MLX/vLLM)
 ```
 
 ### List nodes
