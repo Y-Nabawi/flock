@@ -17,6 +17,35 @@ The fastest path from zero to your first local chat completion. **3 minutes** on
 
 **One machine is enough for most teams.** Multi-machine is for scale-out, not a requirement. Both setups install the same way — only the *commands you run after installing* differ.
 
+### 🖼️ Single-machine setup (what you're building below)
+
+```
+              Your computer  (Mac or Linux)
+   ┌─────────────────────────────────────────────────┐
+   │                                                 │
+   │   ┌───────────┐  ┌────────────┐  ┌───────────┐  │
+   │   │  Cursor   │  │ Claude Code│  │   curl    │  │
+   │   │  Aider    │  │            │  │   SDKs    │  │
+   │   └─────┬─────┘  └─────┬──────┘  └─────┬─────┘  │
+   │         └──────────────┼───────────────┘        │
+   │                        │                        │
+   │                        ▼                        │
+   │           ┌──────────────────────────┐          │
+   │           │      FLOCK  :8080        │          │
+   │           │   OpenAI + Anthropic     │          │
+   │           │   APIs · auth · quotas   │          │
+   │           │   audit log · admin UI   │          │
+   │           └────────────┬─────────────┘          │
+   │                        │ (local pipe)           │
+   │                        ▼                        │
+   │           ┌──────────────────────────┐          │
+   │           │   Ollama  :11434         │          │
+   │           │   (the actual LLM)       │          │
+   │           └──────────────────────────┘          │
+   │                                                 │
+   └─────────────────────────────────────────────────┘
+```
+
 ---
 
 ## 🐣 Step 0 — what you need
@@ -150,6 +179,69 @@ More fixes in the [main README's troubleshooting table](README.md#troubleshootin
 ## 🌐 Add a second (or third…) machine
 
 Same install command everywhere. The first machine becomes the **leader**, every other machine becomes a **worker**.
+
+### 🖼️ Two-machine setup (what you're about to build)
+
+```
+                MACHINE A  (leader)                            MACHINE B  (worker)
+   ┌──────────────────────────────────────┐       ┌──────────────────────────────────────┐
+   │                                      │       │                                      │
+   │  Your tools ──► Flock :8080          │       │      Flock agent :8081               │
+   │                 ┌───────┐            │       │      (worker HTTP server,            │
+   │                 │ Router│ ───────────┼───────┼────► proxies requests to local       │
+   │                 └───────┘            │       │       Ollama, token-auth'd)          │
+   │                                      │       │                  │                   │
+   │  Admin UI  :8080/                    │       │                  ▼                   │
+   │  CLI: flock node ls / model ls       │       │      Ollama :11434                   │
+   │                                      │       │      (does the model serving)        │
+   │  Local Ollama :11434                 │       │                                      │
+   │  (serves models the leader hosts)    │       │  ◄── heartbeat every 5s ──┐          │
+   │                                      │       │      (carries loaded_models)         │
+   │                                      │       │                           │          │
+   └──────────────────────────────────────┘       └───────────────────────────┼──────────┘
+                  ▲                                                           │
+                  │                                                           │
+                  └───────────── LAN / tailnet (e.g. WiFi, Tailscale) ────────┘
+```
+
+### 🖼️ Step-by-step (what happens when)
+
+```
+   LEADER (Machine A)                              WORKER (Machine B)
+   ──────────────────                              ─────────────────
+
+   1. install Ollama
+   2. install Flock              (steps 1+2 same on every machine)
+   3. flock up
+      ✔ admin key shown
+      ✔ listening :8080
+
+   4. flock token create --node
+      ✔ sk-orc-Node-AbCd1234…
+              ─────► copy this token to the worker machine
+
+                                                  1. install Ollama
+                                                  2. install Flock
+                                                  3. flock join \
+                                                       http://leader:8080?token=...
+                                                     ✔ registered with leader
+
+                                ◄──── heartbeat every 5s ────
+
+   5. flock node ls
+      ID         HOSTNAME    STATE
+      local      machine-a   ready
+      n_abc123   machine-b   ready
+
+                                                  6. flock model add qwen-coder-7b
+                                                     (pulls on the worker's Ollama)
+
+   7. curl :8080/v1/chat/completions
+      with model=qwen-coder-7b
+            ────► router sees worker has this model ────►
+                                                     (worker serves it)
+            ◄──────────── response streamed back ─────
+```
 
 ### Step 1 — on the leader
 
