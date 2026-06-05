@@ -383,49 +383,109 @@ Serves 25–50 users comfortably.
 
 ## Installation
 
-### macOS / Linux — one liner
+### Prerequisites — read first
+
+Flock is a **gateway** — it doesn't include an LLM engine. You need one of:
+- **Ollama** (recommended for most users; works on Mac + Linux + NVIDIA + CPU)
+- vLLM (for NVIDIA GPUs at scale — Linux only)
+- MLX-LM (for fastest perf on Apple Silicon)
+
+> ⚠️ **Apple Silicon heads-up:** the Homebrew `ollama` formula is currently missing the internal `llama-server` binary — model inference fails with `500: llama-server binary not found`. Use the **cask** (`brew install --cask ollama`) or the official installer instead. The Flock installer detects this and warns you.
+
+### macOS (Apple Silicon)
 
 ```bash
-curl -fsSL https://get.flock.dev | sh
+# 1. install Ollama (use cask, NOT plain `brew install ollama`)
+brew install --cask ollama
+open -a Ollama                      # starts the daemon
+
+# 2. install Flock
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+
+# 3. add the install dir to PATH if the installer says so, e.g.:
+export PATH="$HOME/.local/bin:$PATH"
+
+# 4. start Flock
+flock up
 ```
 
-The script:
-1. Detects OS + architecture
-2. Downloads the right binary from GitHub Releases
-3. Installs to `/usr/local/bin/flock`
-4. Creates `~/.flock/` for config and data
-5. Installs the launchd plist (macOS) or systemd unit (Linux) for the agent
-6. Prints the next command
-
-### Homebrew (macOS / Linux)
+### Linux (x86_64 or arm64)
 
 ```bash
-brew tap hadihonarvar/tap
-brew install flock
+# 1. install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama   # or just: ollama serve &
+
+# 2. install Flock
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+
+# 3. add install dir to PATH if needed
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# 4. start Flock
+flock up
 ```
 
-### Docker (Linux only — for the NVIDIA worker)
+### What the installer does
+
+1. Detects your OS + architecture (must be macOS/arm64, Linux/x86_64, or Linux/arm64)
+2. Checks for required shell tools (curl, tar)
+3. Checks whether Ollama is installed and warns with the install command if not
+4. Detects the broken-Homebrew-ollama case on macOS and tells you how to fix it
+5. Fetches the **latest release** binary from GitHub Releases
+6. Verifies SHA-256 against `checksums.txt`
+7. Installs to `~/.local/bin/flock` (or `/usr/local/bin/flock` with sudo)
+8. Prints next steps + tells you if PATH needs updating
+
+### Installer flags (after `| sh -s --`)
 
 ```bash
-docker run --gpus all -p 8081:8000 \
-  -v ~/.flock/models:/models \
-  flockhq/worker-vllm:latest \
-  --model /models/qwen3-72b-awq
+--help                  show usage
+--version <vX.Y.Z>      install a specific version
+--install-dir <path>    install to a specific dir
+--no-engine             skip the Ollama check
+--dry-run               show what would happen, no writes
 ```
 
-Then run `flock join` on the same host so the local Go agent picks up the container as a managed engine.
+Install **and** join a cluster in one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | \
+    sh -s -- join https://leader.local:8080?token=<TOKEN>
+```
 
 ### Build from source
 
-See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#build-from-source).
+```bash
+git clone https://github.com/hadihonarvar/flock
+cd flock
+go build -o flock ./cmd/flock
+./flock version
+```
+
+Requires Go 1.22+. See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#build-from-source) for cross-compile + release builds.
 
 ### System requirements
 
-- macOS 13+ on Apple Silicon (M1 or newer)
-- Linux x86_64 or arm64 (Ubuntu 22.04+, Debian 12+, Fedora 39+, RHEL 9+)
-- Linux + NVIDIA: NVIDIA driver 535+, NVIDIA Container Toolkit (if using Docker engines)
-- 8 GB RAM minimum (more for serving)
-- 50 GB disk for the binary, configs, and model cache (much more if you cache big models)
+- **macOS** 13+ on Apple Silicon (M1 or newer). Intel Macs not tested.
+- **Linux** x86_64 or arm64 (Ubuntu 22.04+, Debian 12+, Fedora 39+, RHEL 9+).
+- **Linux + NVIDIA**: NVIDIA driver 535+ (for vLLM); CUDA installed via the standard NVIDIA repos.
+- **RAM**: 8 GB minimum, 16+ GB recommended; whatever model you load needs to fit.
+- **Disk**: 50 GB for the binary + configs + small model cache; 200+ GB if you'll cache 70B-class models.
+- **Network**: outbound HTTPS to GitHub + HuggingFace for downloading.
+
+### Troubleshooting installation
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `curl: (22) … 404` from installer | No release yet for your platform | Check https://github.com/hadihonarvar/flock/releases ; specify `--version` if needed |
+| `command not found: flock` after install | Install dir not on PATH | `export PATH="$HOME/.local/bin:$PATH"` in your shell rc |
+| `flock up` works, but chat returns 502 `llama-server binary not found` | Homebrew `ollama` formula on Apple Silicon | `brew uninstall ollama && brew install --cask ollama` |
+| `flock up` says "engine not reachable" | Ollama daemon not running | `ollama serve &` (Linux: `sudo systemctl start ollama`) |
+| `Port 8080 in use` | Another process is using the port | `FLOCK_LISTEN=:8081 flock up` |
+| `checksum MISMATCH` | Corrupt download or tampering | Re-run installer; if it persists, file a security report (see SECURITY.md) |
+| GH API rate-limited during install | Anonymous GH API limit (60/hr) | Wait, or set `FLOCK_VERSION=v0.x.y` to skip the lookup |
 
 ---
 

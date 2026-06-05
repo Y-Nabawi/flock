@@ -78,16 +78,23 @@ release:
     brew install hadihonarvar/tap/flock
     ```
 
-brews:
-  - name: flock
-    homepage: 'https://github.com/hadihonarvar/flock'
-    description: 'Orchestrate open-weight LLMs across your machines.'
-    license: Apache-2.0
-    repository:
-      owner: hadihonarvar
-      name: homebrew-tap
-      branch: main
-    install: |
-      bin.install "flock"
-    test: |
-      system "#{bin}/flock", "version"
+# Homebrew tap publishing is disabled until the hadihonarvar/homebrew-tap
+# repo exists. To re-enable:
+#   1. Create the repo: gh repo create hadihonarvar/homebrew-tap --public
+#   2. Generate a fine-grained PAT with contents:write on that repo
+#   3. Add it as GitHub secret HOMEBREW_TAP_GITHUB_TOKEN
+#   4. Uncomment the brews block below
+#
+# brews:
+#   - name: flock
+#     homepage: 'https://github.com/hadihonarvar/flock'
+#     description: 'Orchestrate open-weight LLMs across your machines.'
+#     license: Apache-2.0
+#     repository:
+#       owner: hadihonarvar
+#       name: homebrew-tap
+#       branch: main
+#     install: |
+#       bin.install "flock"
+#     test: |
+#       system "#{bin}/flock", "version"
