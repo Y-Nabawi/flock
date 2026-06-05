@@ -130,6 +130,7 @@
         <a href="#what" class="text-slate-300 hover:text-white">What it is</a>
         <a href="#quickstart" class="text-slate-300 hover:text-white">Quick start</a>
         <a href="#dashboard" class="text-slate-300 hover:text-white">Interface</a>
+        <a href="#models-guide" class="text-slate-300 hover:text-white">Models</a>
         <a href="#cluster" class="text-slate-300 hover:text-white">Cluster</a>
         <a href="#compare" class="text-slate-300 hover:text-white">Compare</a>
         <a href="#docs" class="text-slate-300 hover:text-white">Docs</a>
@@ -828,6 +829,125 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
             </div>
           </li>
         </ol>
+      </div>
+    </section>
+
+    <!-- ============================ MODELS GUIDE ============================ -->
+    <section id="models-guide" class="anchor-pad py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-12">
+          <span class="pill bg-emerald-100 text-emerald-700">Use any model</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Use Qwen, Llama, DeepSeek — or anything in Ollama</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            Flock ships a curated catalog with the most useful local models. You can also use any model Ollama supports via pass-through, or wire up vLLM / MLX-LM for higher throughput.
+          </p>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100 border-b border-slate-200">
+              <tr class="text-xs text-slate-600 uppercase tracking-wide">
+                <th class="text-left p-3 font-semibold">Catalog id</th>
+                <th class="text-left p-3 font-semibold">What it's for</th>
+                <th class="text-left p-3 font-semibold">RAM</th>
+                <th class="text-left p-3 font-semibold">Engine name (Ollama)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3">smoke test, fastest</td><td class="p-3">2 GB</td><td class="p-3 font-mono text-xs">llama3.2:1b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-3.2-3b</td><td class="p-3">small fast chat</td><td class="p-3">4 GB</td><td class="p-3 font-mono text-xs">llama3.2:3b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3">code completion + chat</td><td class="p-3">8 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:7b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3">better code + agent</td><td class="p-3">16 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:14b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen-coder-32b</td><td class="p-3">strong code agent (laptop max)</td><td class="p-3">32 GB</td><td class="p-3 font-mono text-xs">qwen2.5-coder:32b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-8b</td><td class="p-3">general chat, balanced</td><td class="p-3">12 GB</td><td class="p-3 font-mono text-xs">qwen3:8b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">qwen3-14b</td><td class="p-3">general chat, more capable</td><td class="p-3">16 GB</td><td class="p-3 font-mono text-xs">qwen3:14b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">deepseek-r1-8b</td><td class="p-3">reasoning ("thinking")</td><td class="p-3">12 GB</td><td class="p-3 font-mono text-xs">deepseek-r1:8b</td></tr>
+              <tr><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3">frontier, split across machines</td><td class="p-3">48+ GB total</td><td class="p-3 font-mono text-xs">sharded llama.cpp</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-8 grid md:grid-cols-2 gap-4">
+          <div class="bg-slate-900 text-slate-100 rounded-lg p-5 font-mono text-xs leading-relaxed overflow-x-auto">
+<span class="text-slate-500"># Install a catalog model</span>
+$ flock model add qwen-coder-14b
+
+<span class="text-slate-500"># Use it via the API</span>
+$ curl :8080/v1/chat/completions \
+    -H 'Authorization: Bearer sk-orc-...' \
+    -d '{"model":"qwen-coder-14b","messages":[…]}'
+
+<span class="text-slate-500"># Or in Claude Code</span>
+$ export ANTHROPIC_MODEL=qwen-coder-14b
+$ claude</div>
+
+          <div class="bg-slate-900 text-slate-100 rounded-lg p-5 font-mono text-xs leading-relaxed overflow-x-auto">
+<span class="text-slate-500"># Use any Ollama model (no catalog entry needed)</span>
+$ ollama pull mistral-nemo:12b
+$ curl :8080/v1/chat/completions \
+    -H 'Authorization: Bearer sk-orc-...' \
+    -d '{"model":"mistral-nemo:12b","messages":[…]}'
+
+<span class="text-slate-500"># Or swap engines entirely</span>
+$ export FLOCK_ENGINE=vllm
+$ export FLOCK_VLLM_ENDPOINT=http://gpu:8000
+$ flock up</div>
+        </div>
+
+        <p class="mt-6 text-sm text-slate-500 text-center">
+          See the <a href="https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md#-use-a-different-model-qwen-llama-deepseek" class="underline">Use a different model</a> section in QUICKSTART for the full guide.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================ SWITCH BACK ============================ -->
+    <section id="switch-back" class="anchor-pad py-20 bg-slate-50 border-y border-slate-200">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="max-w-3xl mb-10">
+          <span class="pill bg-amber-100 text-amber-700">Reversible</span>
+          <h2 class="mt-3 text-3xl md:text-4xl font-bold tracking-tight">Try Flock without commitment</h2>
+          <p class="mt-4 text-lg text-slate-600 leading-relaxed">
+            Pointing Claude Code at Flock is just three env vars. Going back to <code class="font-mono text-sm bg-slate-200 px-1.5 py-0.5 rounded">api.anthropic.com</code> is unsetting them.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="bg-white border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-emerald-600 font-semibold">Switch to Flock</div>
+            <pre class="mt-3 font-mono text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded border overflow-x-auto">export ANTHROPIC_BASE_URL=\
+  http://localhost:8080
+export ANTHROPIC_AUTH_TOKEN=\
+  sk-orc-...
+export ANTHROPIC_MODEL=\
+  llama-3.2-1b
+
+claude</pre>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-amber-600 font-semibold">Switch back to real Anthropic</div>
+            <pre class="mt-3 font-mono text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded border overflow-x-auto">unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_AUTH_TOKEN
+unset ANTHROPIC_MODEL
+
+export ANTHROPIC_API_KEY=\
+  sk-ant-...
+
+claude</pre>
+            <p class="mt-3 text-xs text-slate-500">Or just open a fresh terminal — Claude Code defaults to <code class="font-mono text-xs">api.anthropic.com</code> when the BASE_URL var isn't set.</p>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-lg p-5">
+            <div class="text-xs uppercase tracking-wide text-blue-600 font-semibold">Hybrid (recommended)</div>
+            <pre class="mt-3 font-mono text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded border overflow-x-auto"># Keep Flock vars set,
+# add real Anthropic key:
+export ANTHROPIC_API_KEY=\
+  sk-ant-...
+
+flock up  # restart</pre>
+            <p class="mt-3 text-xs text-slate-500">Now <code class="font-mono text-xs">--model claude-opus-4-7</code> transparently proxies to real Anthropic. Local models stay free. Same <code class="font-mono text-xs">claude</code>, you pick per-prompt.</p>
+          </div>
+        </div>
       </div>
     </section>
 

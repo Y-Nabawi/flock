@@ -290,13 +290,133 @@ Any request the gateway gets for `qwen-coder-7b` is now routed automatically to 
 
 ---
 
+## 🤖 Use a different model (Qwen, Llama, DeepSeek…)
+
+The default `llama-3.2-1b` is tiny — good for "does this work?" but underpowered for real work. Flock ships a curated **catalog** of better models.
+
+### Browse what's in the catalog
+
+```bash
+flock model search           # list everything
+flock model search coder     # filter
+```
+
+| Catalog id | What it's for | RAM | Engine name |
+|---|---|---|---|
+| `llama-3.2-1b` | smoke test | 2 GB | `ollama:llama3.2:1b` |
+| `llama-3.2-3b` | small fast chat | 4 GB | `ollama:llama3.2:3b` |
+| `qwen-coder-7b` | code completion + chat | 8 GB | `ollama:qwen2.5-coder:7b` |
+| `qwen-coder-14b` | better code + agent | 16 GB | `ollama:qwen2.5-coder:14b` |
+| `qwen-coder-32b` | strong code agent (laptop max) | 32 GB | `ollama:qwen2.5-coder:32b` |
+| `qwen3-8b` | general chat, balanced | 12 GB | `ollama:qwen3:8b` |
+| `qwen3-14b` | general chat, more capable | 16 GB | `ollama:qwen3:14b` |
+| `deepseek-r1-8b` | reasoning ("thinking") | 12 GB | `ollama:deepseek-r1:8b` |
+| `llama-3.3-70b-sharded` | frontier, split across machines | 48+ GB total | sharded llama.cpp |
+
+### Install + use a specific model
+
+```bash
+# 1. install the model
+flock model add qwen-coder-14b
+# Flock asks Ollama to pull qwen2.5-coder:14b and registers it.
+
+# 2. use it by its catalog id in API requests
+curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer sk-orc-..." \
+  -d '{"model":"qwen-coder-14b","messages":[{"role":"user","content":"explain monads"}]}'
+
+# 3. or in Claude Code
+export ANTHROPIC_MODEL=qwen-coder-14b
+claude
+```
+
+### Use ANY model Ollama supports (not just the catalog)
+
+The catalog is curated for UX, but Flock will pass through any Ollama model name as-is. Steps:
+
+```bash
+# pull directly via Ollama (Flock's catalog is bypassed):
+ollama pull mistral-nemo:12b
+
+# then in your API request, use the engine-native name:
+curl :8080/v1/chat/completions -H "Authorization: Bearer sk-orc-..." \
+  -d '{"model":"mistral-nemo:12b","messages":[…]}'
+```
+
+This works because Flock's router falls through to the engine when no catalog entry matches the requested model id.
+
+### Use a different engine entirely (vLLM, MLX-LM)
+
+Edit `~/.flock/config.yaml`:
+
+```yaml
+engine:
+  preferred: vllm                       # was: ollama
+  vllm_endpoint: http://gpu-host:8000   # where your vLLM is running
+```
+
+Or via env: `FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://gpu:8000 flock up`. The router doesn't care which engine serves the request — it just routes by model name.
+
+---
+
+## 🔌 Switch Claude Code back to real Anthropic
+
+You set three env vars to route Claude Code through Flock. To go back to using the real Anthropic API, unset them:
+
+```bash
+unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_AUTH_TOKEN
+unset ANTHROPIC_MODEL
+```
+
+Then in the same terminal, set your real Anthropic key:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-…
+claude
+```
+
+Or just **open a fresh terminal** that never had the Flock vars exported — Claude Code defaults to `api.anthropic.com` when `ANTHROPIC_BASE_URL` isn't set.
+
+### Make the switch permanent
+
+If you'd added those `export` lines to `~/.zshrc` or `~/.bashrc`, remove them:
+
+```bash
+# before:
+export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_AUTH_TOKEN=sk-orc-...
+export ANTHROPIC_MODEL=llama-3.2-1b
+
+# after (remove all three, or just comment them out)
+```
+
+Then `source ~/.zshrc` (or open a new terminal).
+
+### Hybrid: keep Flock as your default, fall back to real Claude when needed
+
+This is the best-of-both pattern. Leave the three vars set, but configure Flock with your real Anthropic key:
+
+```bash
+# add to your shell rc:
+export ANTHROPIC_API_KEY=sk-ant-…    # real Anthropic key (for Flock to proxy)
+# (Flock vars stay as before)
+```
+
+Restart `flock up`. Now:
+- `claude --model llama-3.2-1b` → served by your local Ollama (free, private)
+- `claude --model claude-opus-4-7` → transparently proxied to real Anthropic by Flock, logged in the Usage tab, billed to *your* Anthropic account
+
+Same `claude` command, same key paste, you pick per-prompt.
+
+---
+
 ## 🎯 Next steps
 
-- **Use a bigger model**: `flock model add qwen-coder-14b` (needs ~10 GB RAM)
-- **Wire up real Claude/GPT as fallback**: `export ANTHROPIC_API_KEY=...` before `flock up` — requests for `claude-*` model names transparently proxy to Anthropic and get logged like local requests
 - **See the full UI tour, CLI reference, troubleshooting**: [README.md](README.md)
 - **Understand the architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
 - **Per-command help**: `flock <cmd> --help` for any command
+- **Add more workers**: see [Add a second machine](#-add-a-second-or-third-machine) above
 
 ---
 
