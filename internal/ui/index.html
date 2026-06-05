@@ -33,6 +33,8 @@
       </div>
       <nav class="max-w-6xl mx-auto px-6 flex gap-1 text-sm">
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="dashboard">Dashboard</button>
+        <button class="tab px-4 py-2 text-emerald-300 hover:text-white" data-view="connect">Connect</button>
+        <button class="tab px-4 py-2 text-emerald-300 hover:text-white" data-view="playground">Playground</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="nodes">Nodes</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="models">Models</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="shards">Shards</button>
@@ -57,6 +59,8 @@
     <!-- Content -->
     <main id="content" class="hidden flex-1 max-w-6xl mx-auto w-full px-6 py-6">
       <div id="view-dashboard" class="view space-y-6"></div>
+      <div id="view-connect" class="view hidden"></div>
+      <div id="view-playground" class="view hidden"></div>
       <div id="view-nodes" class="view hidden"></div>
       <div id="view-models" class="view hidden"></div>
       <div id="view-shards" class="view hidden"></div>
@@ -138,6 +142,8 @@ function switchView(v) {
   $("#view-" + v).classList.remove("hidden");
   ({
     dashboard: renderDashboard,
+    connect: renderConnect,
+    playground: renderPlayground,
     nodes: renderNodes,
     models: renderModels,
     shards: renderShards,
@@ -190,6 +196,282 @@ async function renderDashboard() {
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
+}
+
+// =========== Connect tab (M3-T23 + M3-T24) ===========
+//
+// Lets a user pick a tool, see the exact paste-ready config snippet
+// with their token already substituted, copy it, and run a health
+// check against the gateway. Backed by /admin/v1/connect/clients,
+// /admin/v1/connect/snippet, and /admin/v1/healthcheck — which all
+// invoke internal/control/ functions, the same code the CLI uses.
+
+let connectClientsCache = null;
+
+async function renderConnect() {
+  const root = $("#view-connect");
+  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  try {
+    if (!connectClientsCache) {
+      connectClientsCache = (await api("/admin/v1/connect/clients")) || [];
+    }
+    const clients = connectClientsCache;
+    const options = clients.map((c, i) =>
+      `<option value="${c.ID}"${i === 0 ? " selected" : ""}>${c.ID} — ${c.Description}</option>`
+    ).join("");
+    root.innerHTML = `
+      <div class="mb-3">
+        <h2 class="text-lg font-semibold">Wire up a tool</h2>
+        <p class="text-xs text-slate-600">Pick a tool, copy its config snippet, paste into your shell or app settings. The token below is your current session token.</p>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded p-4 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="text-xs text-slate-500">Tool</label>
+            <select id="connClient" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">${options}</select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Model to suggest</label>
+            <input id="connModel" type="text" value="auto" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+          <div class="flex gap-2">
+            <button onclick="renderConnectSnippet()" class="bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-medium flex-1">Show config</button>
+            <button onclick="runHealthCheck()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium" title="Send a tiny chat completion through the gateway with the current default model — proves wiring works end-to-end">Test connection</button>
+          </div>
+        </div>
+        <div id="healthResult" class="hidden mt-3 text-sm"></div>
+      </div>
+
+      <div id="snippetBox" class="hidden">
+        <div class="flex justify-between items-center mb-2">
+          <div class="text-xs uppercase tracking-wide text-slate-500" id="snippetTitle">Snippet</div>
+          <button onclick="copySnippet()" id="copySnippetBtn" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded">Copy</button>
+        </div>
+        <pre id="snippetPre" class="bg-slate-900 text-emerald-300 rounded p-4 text-xs overflow-x-auto whitespace-pre"></pre>
+      </div>
+
+      <div class="mt-6 text-xs text-slate-500">
+        Same content as <span class="code">flock connect &lt;tool&gt;</span> on the CLI — the admin endpoint wraps the same Go function the CLI calls.
+      </div>`;
+    // Auto-render the first client's snippet on load.
+    await renderConnectSnippet();
+  } catch (e) {
+    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+async function renderConnectSnippet() {
+  const client = $("#connClient").value;
+  const model = $("#connModel").value.trim() || "auto";
+  const box = $("#snippetBox");
+  const pre = $("#snippetPre");
+  const title = $("#snippetTitle");
+  try {
+    const out = await api("/admin/v1/connect/snippet", {
+      method: "POST",
+      body: JSON.stringify({ client, model }),
+    });
+    title.textContent = `${out.Client.ID} — ${out.Client.Protocol} API`;
+    pre.textContent = out.Snippet;
+    box.classList.remove("hidden");
+  } catch (e) {
+    title.textContent = "Error";
+    pre.textContent = e.message;
+    box.classList.remove("hidden");
+  }
+}
+
+async function copySnippet() {
+  const text = $("#snippetPre").textContent;
+  const btn = $("#copySnippetBtn");
+  try {
+    await navigator.clipboard.writeText(text);
+    const orig = btn.textContent;
+    btn.textContent = "Copied!";
+    btn.classList.add("bg-emerald-300");
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove("bg-emerald-300");
+    }, 1500);
+  } catch (e) {
+    alert("Copy failed: " + e.message);
+  }
+}
+
+async function runHealthCheck() {
+  const box = $("#healthResult");
+  box.classList.remove("hidden");
+  box.innerHTML = `<span class="text-slate-500">⏱  Sending test request through the gateway…</span>`;
+  try {
+    const out = await api("/admin/v1/healthcheck", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (out.ok) {
+      box.innerHTML = `<span class="text-emerald-700">✔ OK</span> · ${out.latency_ms} ms · model: <span class="code">${out.model}</span> · engine: <span class="code">${out.engine}</span><br><span class="text-xs text-slate-500">Reply: "${(out.reply || "").replace(/</g, "&lt;").slice(0, 200)}"</span>`;
+    } else {
+      box.innerHTML = `<span class="text-red-700">✘ FAILED</span> · ${out.latency_ms} ms · model: <span class="code">${out.model}</span><br><span class="text-xs text-red-600">${out.error || "unknown error"}</span>`;
+    }
+  } catch (e) {
+    box.innerHTML = `<span class="text-red-700">✘ request failed:</span> ${e.message}`;
+  }
+}
+
+// =========== Playground tab (M3-T25) ===========
+//
+// Simple in-browser chat. Lets non-technical users prove the gateway
+// + model work in 10 seconds without setting up Cursor or Claude
+// Code. Uses /v1/chat/completions with streaming.
+
+let playgroundModels = null;
+
+async function renderPlayground() {
+  const root = $("#view-playground");
+  root.innerHTML = `<div class="text-sm text-slate-500">Loading models…</div>`;
+  try {
+    if (!playgroundModels) {
+      const resp = await api("/v1/models");
+      playgroundModels = (resp.data || []).map((m) => m.id);
+    }
+    const options = playgroundModels.map((id, i) =>
+      `<option value="${id}"${i === 0 ? " selected" : ""}>${id}</option>`
+    ).join("");
+    root.innerHTML = `
+      <div class="mb-3">
+        <h2 class="text-lg font-semibold">Playground</h2>
+        <p class="text-xs text-slate-600">Send a chat request directly through the gateway — useful for sanity-checking before wiring up Cursor or Claude Code.</p>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded p-4 space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="text-xs text-slate-500">Model</label>
+            <select id="pgModel" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">${options || "<option>auto</option>"}</select>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Max tokens</label>
+            <input id="pgMaxTokens" type="number" value="256" min="1" max="4096" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Temperature</label>
+            <input id="pgTemp" type="number" value="0.7" min="0" max="2" step="0.1" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">System prompt (optional)</label>
+          <textarea id="pgSystem" rows="2" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" placeholder="You are a helpful assistant."></textarea>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Your message</label>
+          <textarea id="pgUser" rows="4" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" placeholder="What can you do?"></textarea>
+        </div>
+        <div class="flex gap-2">
+          <button id="pgSendBtn" onclick="pgSend()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Send</button>
+          <button onclick="pgClear()" class="bg-slate-200 text-slate-700 px-4 py-2 rounded text-sm">Clear</button>
+        </div>
+      </div>
+
+      <div id="pgResponseBox" class="hidden mt-4">
+        <div class="flex justify-between items-center mb-2">
+          <div class="text-xs uppercase tracking-wide text-slate-500" id="pgResponseLabel">Response</div>
+          <div id="pgStatus" class="text-xs text-slate-500"></div>
+        </div>
+        <pre id="pgResponsePre" class="bg-slate-50 border border-slate-200 rounded p-4 text-sm whitespace-pre-wrap"></pre>
+      </div>`;
+  } catch (e) {
+    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+let pgController = null;
+
+async function pgSend() {
+  const model = $("#pgModel").value;
+  const system = $("#pgSystem").value.trim();
+  const user = $("#pgUser").value.trim();
+  if (!user) { alert("Type a message first."); return; }
+  const maxTokens = parseInt($("#pgMaxTokens").value, 10) || 256;
+  const temp = parseFloat($("#pgTemp").value) || 0.7;
+
+  const box = $("#pgResponseBox");
+  const pre = $("#pgResponsePre");
+  const status = $("#pgStatus");
+  const btn = $("#pgSendBtn");
+  box.classList.remove("hidden");
+  pre.textContent = "";
+  status.textContent = "streaming…";
+  btn.disabled = true;
+  btn.classList.add("opacity-50");
+
+  const messages = [];
+  if (system) messages.push({ role: "system", content: system });
+  messages.push({ role: "user", content: user });
+
+  const t0 = performance.now();
+  try {
+    if (pgController) pgController.abort();
+    pgController = new AbortController();
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      signal: pgController.signal,
+      headers: {
+        "Authorization": "Bearer " + API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: maxTokens,
+        temperature: temp,
+        stream: true,
+      }),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(`${resp.status}: ${t}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames: each "data: ..." line is one event.
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "" || payload === "[DONE]") continue;
+        try {
+          const obj = JSON.parse(payload);
+          const delta = obj.choices?.[0]?.delta?.content;
+          if (delta) pre.textContent += delta;
+        } catch { /* skip malformed frame */ }
+      }
+    }
+    status.textContent = `done · ${Math.round(performance.now() - t0)} ms`;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      status.textContent = "aborted";
+    } else {
+      status.textContent = "error";
+      pre.textContent += `\n\n[error: ${e.message}]`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("opacity-50");
+    pgController = null;
+  }
+}
+
+function pgClear() {
+  $("#pgUser").value = "";
+  $("#pgSystem").value = "";
+  $("#pgResponseBox").classList.add("hidden");
+  $("#pgResponsePre").textContent = "";
 }
 
 async function renderNodes() {
@@ -272,6 +554,144 @@ function showOneTimeModal(title, blurb, content) {
       </div>
     </div>`;
   document.body.appendChild(div);
+}
+
+// =========== Invite teammate modal (M3-T26) ===========
+//
+// Opens a form (name + quota), POSTs to /admin/v1/invite, then
+// replaces the form with the share card returned by the server.
+// The server-side handler wraps internal/control/Invite — same code
+// the `flock invite` CLI runs, so the resulting store state + share
+// card are identical regardless of surface.
+
+function openInviteModal() {
+  const div = document.createElement("div");
+  div.className = "fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6";
+  div.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6" id="inviteModalBody">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <div class="text-lg font-semibold">Invite a teammate</div>
+          <div class="text-sm text-slate-600 mt-1">Creates a user-scope token + a share card with paste-ready config for every supported tool. Token is shown once.</div>
+        </div>
+        <button class="text-slate-400 hover:text-slate-700" onclick="this.closest('.fixed').remove()">✕</button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-slate-500">Name</label>
+          <input id="invName" type="text" placeholder="alice" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-slate-500">Daily token quota (0 = unlimited)</label>
+            <input id="invQuota" type="number" value="0" min="0" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">Suggested model in snippets</label>
+            <input id="invModel" type="text" value="auto" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm" />
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Include these tools (comma-separated, blank = all)</label>
+          <input id="invClients" type="text" placeholder="claude-code, cursor, aider" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />
+        </div>
+      </div>
+
+      <div id="invErr" class="hidden mt-3 text-sm text-red-600"></div>
+
+      <div class="mt-5 flex justify-end gap-2">
+        <button class="text-sm text-slate-600 hover:underline" onclick="this.closest('.fixed').remove()">Cancel</button>
+        <button id="invSubmit" onclick="submitInvite()" class="text-sm bg-emerald-600 text-white px-4 py-1.5 rounded font-medium">Create user + token</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+  setTimeout(() => document.getElementById("invName")?.focus(), 50);
+}
+
+async function submitInvite() {
+  const name = document.getElementById("invName").value.trim();
+  const quota = parseInt(document.getElementById("invQuota").value, 10) || 0;
+  const model = document.getElementById("invModel").value.trim() || "auto";
+  const clientsRaw = document.getElementById("invClients").value.trim();
+  const clients = clientsRaw ? clientsRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  const errEl = document.getElementById("invErr");
+  const btn = document.getElementById("invSubmit");
+  errEl.classList.add("hidden");
+
+  if (!name) { errEl.textContent = "Name is required."; errEl.classList.remove("hidden"); return; }
+
+  btn.disabled = true;
+  btn.classList.add("opacity-50");
+  btn.textContent = "Creating…";
+  try {
+    const res = await api("/admin/v1/invite", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        quota_daily_tokens: quota,
+        clients,
+        model,
+      }),
+    });
+    showInviteResult(res);
+    // Trigger a refresh of the tokens table behind the modal.
+    if (currentView === "tokens") renderTokens();
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove("hidden");
+    btn.disabled = false;
+    btn.classList.remove("opacity-50");
+    btn.textContent = "Create user + token";
+  }
+}
+
+function showInviteResult(res) {
+  // Replace modal body with the result card.
+  const body = document.getElementById("inviteModalBody");
+  if (!body) return;
+  const safeMd = (res.markdown_card || "").replace(/</g, "&lt;");
+  body.innerHTML = `
+    <div class="flex justify-between items-start mb-3">
+      <div>
+        <div class="text-lg font-semibold">✔ Created '${res.name}'</div>
+        <div class="text-xs text-slate-600 mt-1">Token id: <span class="code">${res.token_id}</span> · scope: ${res.scope} · revoke later with <span class="code">flock token revoke ${res.token_id}</span></div>
+      </div>
+      <button class="text-slate-400 hover:text-slate-700" onclick="this.closest('.fixed').remove()">✕</button>
+    </div>
+
+    <div class="mb-3">
+      <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">Token (shown once — copy now)</div>
+      <div class="flex items-center gap-2">
+        <input readonly value="${res.token}" id="invTokenField" class="flex-1 font-mono text-sm border border-slate-300 rounded px-2 py-1.5 bg-slate-50" onclick="this.select()" />
+        <button onclick="copyVal('invTokenField', this)" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded">Copy</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="flex justify-between items-center mb-1">
+        <div class="text-xs uppercase tracking-wide text-slate-500">Share card (paste into Slack / DM)</div>
+        <button onclick="copyVal('invShareCard', this)" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded">Copy markdown</button>
+      </div>
+      <textarea readonly id="invShareCard" rows="14" class="w-full font-mono text-xs border border-slate-300 rounded p-2 bg-slate-50" onclick="this.select()">${safeMd}</textarea>
+    </div>
+
+    <div class="mt-4 flex justify-end">
+      <button class="text-sm bg-slate-900 text-white px-4 py-1.5 rounded" onclick="this.closest('.fixed').remove()">Done</button>
+    </div>`;
+}
+
+function copyVal(id, btn) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = "Copied!";
+    btn.classList.add("bg-emerald-300");
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove("bg-emerald-300");
+    }, 1500);
+  });
 }
 
 async function renderModels() {
@@ -485,6 +905,7 @@ async function renderTokens() {
     root.innerHTML = `
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">API keys</h2>
+        <button onclick="openInviteModal()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">+ Invite teammate</button>
       </div>
       ${table(["ID", "Name", "Scope", "User", "Daily quota", "Status", "Created", ""], rows)}
 

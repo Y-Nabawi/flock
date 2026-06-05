@@ -215,23 +215,24 @@ func (r *Router) modelOnNode(ctx context.Context, nodeID, modelID string) (bool,
 
 // getOrCreateRemote returns a cached remote engine (vLLM driver pointing at the
 // worker's address) or builds + caches one.
+//
+// Concurrency: holds the write lock for the entire check-and-create so
+// two concurrent calls for the same nodeID can't each construct a fresh
+// engine and have one silently overwrite the other. The window is short
+// (engines.NewVLLM is a small struct alloc, no I/O) so write-lock for
+// the duration is fine.
 func (r *Router) getOrCreateRemote(nodeID, address, token string) engines.Engine {
-	r.mu.RLock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if eng, ok := r.remotes[nodeID]; ok {
-		r.mu.RUnlock()
 		return eng
 	}
-	r.mu.RUnlock()
-
 	endpoint := address
 	if !startsWithScheme(endpoint) {
 		endpoint = "http://" + endpoint
 	}
 	eng := engines.NewVLLM(endpoint, token)
-
-	r.mu.Lock()
 	r.remotes[nodeID] = eng
-	r.mu.Unlock()
 	return eng
 }
 

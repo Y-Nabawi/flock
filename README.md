@@ -835,16 +835,38 @@ LoRA adapter loading (`flock model adapter add`) is on the roadmap; see TASKS.md
 
 ## Connecting clients
 
-The snippets below tell you exactly what to paste into each client today. Each one needs (a) your Flock base URL and (b) an API key (admin or user-scope).
+You have **three ways** to wire up a tool: the CLI, the dashboard, or copy-paste from the snippets below. All three produce the same config — they all invoke the same `internal/control/` code path.
 
-> **Coming in v0.5 (tracked as [M3-T20 → M3-T26](TASKS.md#onboarding-and-sharing-track-m3-t20--m3-t26)):** these snippets get generated automatically.
->
-> - `flock connect claude-code` — prints exact env vars with your base URL + token already substituted
-> - `flock connect cursor` / `aider` / `continue` / `zed` / `cline` / `qwen-code` / `openai-sdk` / `anthropic-sdk` / `curl` — same, per tool
-> - `flock invite <name>` — creates a user-scope token and prints a complete share card with snippets for all 10 supported clients (paste-into-Slack friendly)
-> - Web dashboard grows a **Connect** tab (one-click copy + test-connection button) and a **Playground** tab (in-browser chat for sanity-checking before wiring up Cursor)
->
-> Until those land, copy from the snippets below and substitute your own URL / key.
+### Fastest: `flock connect <client>`
+
+```bash
+flock connect claude-code           # prints env vars, pre-filled with your URL + token
+flock connect cursor                # prints Cursor settings, pre-filled
+flock connect --list                # 10 supported clients today
+```
+
+Token comes from `$FLOCK_TOKEN` if set, otherwise `~/.flock/admin.key` (written when you ran `flock up`).
+
+### For a teammate: `flock invite <name>`
+
+```bash
+flock invite hadi --quota 100000
+# Creates a user-scope token with a 100k tokens/day cap.
+# Prints a paste-into-Slack markdown card with snippets for all 10 clients.
+# Recipient picks the tool they use and pastes — done.
+```
+
+### In the dashboard
+
+Open `http://localhost:8080` after `flock up`. Tabs:
+
+- **Connect** — pick a tool from a dropdown, copy the snippet, click "Test connection" to verify the gateway works end-to-end
+- **Playground** — in-browser chat box: pick a model, send a message, see the streaming response. Useful sanity check before configuring Cursor.
+- **Tokens → + Invite teammate** — same as `flock invite`, with a modal that copies the share card as markdown.
+
+### Reference snippets (manual)
+
+If you can't run `flock connect`, the snippets below are the same content you'd get from the CLI. Substitute your own base URL + token where shown.
 
 ### Cursor
 

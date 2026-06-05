@@ -12,7 +12,7 @@ For user-facing docs see [README.md](README.md). For design rationale see [ARCHI
 - **M1 — single-node MVP**: ✅ done. CLI, OpenAI API + streaming, Ollama driver, hardware detect, catalog, install.sh. Web UI shipped as a single embedded HTML page (Tailwind via CDN) rather than the Next.js scaffold originally planned.
 - **M2 — multi-node**: ✅ **routing now ships**. `flock join` registers + starts a worker HTTP server. Heartbeat carries loaded models; leader reconciles placements. **Router** picks node per request (local-preferred, then least-loaded worker). Anthropic adapter live. vLLM + MLX + llama.cpp-RPC drivers ship. Tailscale `tsnet` mesh still deferred — LAN backend ships in v0.3.
 - **M2.5 — sharding auto-orchestration (v0.4)**: ✅ `flock shard create <model> <N>` picks workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, persists shards + placement, Router routes to coordinator. Web UI "Shards" tab provides the same workflow. Failure rollback included.
-- **M3 — multi-tenant + observability**: ✅ done. Per-user keys / scopes / daily quotas / audit log / usage metering / Prometheus metrics / hybrid fallback to Anthropic + OpenAI. OIDC deferred to v0.4.
+- **M3 — multi-tenant + observability**: ✅ done. Per-user keys / scopes / daily quotas / audit log / usage metering / Prometheus metrics / hybrid fallback to Anthropic + OpenAI. OIDC deferred to v0.4. **Onboarding track (M3-T20 → M3-T26) shipped 2026-06-05** — `flock connect`, `flock invite`, dashboard Connect + Playground + Invite tabs, healthcheck endpoint, all wired through `internal/control/` per the CLI-source-of-truth rule.
 - **M4 — polish**: ✅ minimal embedded UI shipped. LoRA / vision / Whisper / live migration deferred to v0.4.
 - **Release tooling**: ✅ CI workflow, GoReleaser config, Homebrew formula, install.sh.
 - **Fixes**: ✅ 15 code-review findings addressed in commit `70ad076` (engine routing per backend, streaming goroutine leaks, audit log content, vLLM/MLX token accounting, Anthropic tool-block preservation, agent 401/404 handling, more).
@@ -576,11 +576,13 @@ Goal: ready for an actual team of 10. Per-user keys, quotas, OIDC, full observab
 
 ---
 
-### Onboarding-and-sharing track (M3-T20 → M3-T26)
+### Onboarding-and-sharing track (M3-T20 → M3-T26) — ✅ shipped 2026-06-05
 
 The whole point of Flock is your team's existing AI tools (Claude Code, Cursor, Aider, …) working against your hardware. If wiring those up isn't trivially easy, nothing else matters. These seven tasks turn the post-install experience from "go read README on GitHub" into "the dashboard shows you exactly what to paste, the CLI prints exact env vars, and inviting a teammate is one command."
 
 Implementation rule (per Definition of Done): each task ships as a CLI command first; web UI invokes the same Go function the CLI invokes.
+
+**Status:** all seven tasks shipped 2026-06-05. CLI: `flock connect <client>`, `flock invite <name>`, updated `flock up` banner. Dashboard: Connect tab, Playground tab, Invite-from-UI modal in Tokens tab. All UI actions invoke `internal/control/` functions — the same Go code the CLI uses — via three new admin endpoints (`/admin/v1/connect/clients`, `/admin/v1/connect/snippet`, `/admin/v1/invite`, `/admin/v1/healthcheck`).
 
 ### M3-T20 — `flock connect <client>` CLI
 

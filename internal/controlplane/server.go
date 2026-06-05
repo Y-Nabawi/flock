@@ -179,6 +179,12 @@ func (s *Server) routes() http.Handler {
 
 			// Config (read-only sanitized view)
 			r.Get("/config", s.getConfig)
+
+			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
+			r.Get("/connect/clients", s.listConnectClients)
+			r.Post("/connect/snippet", s.renderConnectSnippet)
+			r.Post("/invite", s.inviteUser)
+			r.Post("/healthcheck", s.healthcheck)
 		})
 	})
 
