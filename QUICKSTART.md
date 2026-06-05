@@ -147,20 +147,58 @@ More fixes in the [main README's troubleshooting table](README.md#troubleshootin
 
 ---
 
+## 🌐 Add a second (or third…) machine
+
+Same install command everywhere. The first machine becomes the **leader**, every other machine becomes a **worker**.
+
+### Step 1 — on the leader
+
+```bash
+flock token create --node
+# prints something like:
+#   sk-orc-NodeJoin-ABcD1234…
+```
+
+Note the leader's reachable address. On a LAN it's its LAN IP (e.g. `192.168.1.42`); on Tailscale, the tailnet hostname.
+
+### Step 2 — on the new machine
+
+Install Flock + Ollama **the same way as above**, then instead of `flock up`:
+
+```bash
+flock join http://192.168.1.42:8080?token=sk-orc-NodeJoin-ABcD1234…
+```
+
+(Substitute the leader's address and the token you copied.)
+
+### Step 3 — install a model on the worker
+
+```bash
+flock model add qwen-coder-7b
+```
+
+### Step 4 — verify on the leader
+
+```bash
+flock node ls
+# you should see both machines listed
+```
+
+Any request the gateway gets for `qwen-coder-7b` is now routed automatically to the worker. If you install the **same** model on two workers, the leader load-balances between them.
+
+> ⚠️  Only do this on a trusted LAN or Tailscale — see [Security model](#-security-model-read-before-exposing-it) below.
+
+**Need to split one big model across multiple machines?** That's *sharding* — `flock shard create <model> <N>`. See the [sharded models section in the README](README.md).
+
+---
+
 ## 🎯 Next steps
 
 - **Use a bigger model**: `flock model add qwen-coder-14b` (needs ~10 GB RAM)
-- **Add a second machine** so multiple devs share inference:
-  ```bash
-  flock token create --node       # on leader, prints a join token
-  # on worker:
-  flock join http://leader:8080?token=<TOKEN>
-  ```
-- **Set up Claude/GPT fallback**: `export ANTHROPIC_API_KEY=...` before `flock up` — requests for `claude-*` model names will transparently proxy to Anthropic and get logged the same as local requests
-- **See the full UI tour and CLI reference**: [README.md](README.md)
+- **Wire up real Claude/GPT as fallback**: `export ANTHROPIC_API_KEY=...` before `flock up` — requests for `claude-*` model names transparently proxy to Anthropic and get logged like local requests
+- **See the full UI tour, CLI reference, troubleshooting**: [README.md](README.md)
 - **Understand the architecture**: [ARCHITECTURE.md](ARCHITECTURE.md)
-
----
+- **Per-command help**: `flock <cmd> --help` for any command
 
 ---
 
