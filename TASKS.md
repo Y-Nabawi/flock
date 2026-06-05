@@ -28,7 +28,9 @@ These are the gaps between marketing copy and what the binary actually does toda
 - **Shard crash recovery** — sharding auto-orchestration ships in v0.4, but if a worker's `rpc-server` dies mid-stream, the model goes unavailable until the admin re-runs `flock shard create`. v0.5 should add a watcher that restarts exited shards.
 - **Coordinator on a worker** — today the coordinator (`llama-server`) always runs on the leader. v0.5 should allow it to run on the strongest worker, especially when the leader has weak hardware.
 - **Auto-rebalancing sharding** — shard count is currently picked by the admin (`flock shard create <model> <N>`). v1.0 should pick `N` automatically from worker count, model size, and free VRAM. (tracked as M5-T11)
-- **Automatic GGUF distribution** — for sharded models the GGUF must already be on the leader; v0.5 should auto-download from HF or stream from the leader to workers as needed.
+- **Automatic GGUF distribution** — for sharded models the GGUF must already be on the leader; v0.5 should auto-download from HF or stream from the leader to workers as needed. (tracked as M5-T12)
+- **`rpc-server` binary bundling** — sharding requires `rpc-server` on every node, but Homebrew doesn't ship it; users currently source-build llama.cpp. (tracked as M4-T14)
+- **Catalog smoke-test CI** — catalog YAMLs aren't currently verified to actually boot. Before catalog expansion (M4-T06), we need a CI job that smoke-tests each entry. (tracked as M4-T15)
 
 **API surface**
 
@@ -649,6 +651,18 @@ Goal: launch publicly. Quality bar high enough to keep stars and adopt PRs.
 - Files: `internal/api/anthropic.go`
 - Acceptance: `/v1/messages` parses `computer_20241022`, `bash_20241022`, `text_editor_20241022` tool definitions and passes them through to engines that support tool-calling; tool_result blocks of these shapes round-trip correctly. Local engines without computer-use capability return an explicit "not supported by this model" error rather than silently dropping the tool.
 
+### M4-T14 — Bundle `rpc-server` binary in Flock release
+
+- Owner: DevOps · Effort: S · Depends on: M2.5
+- Files: `Makefile`, `.github/workflows/release.yml`, `installer/install.sh`
+- Acceptance: Every Flock release tarball includes a prebuilt `rpc-server` for darwin/arm64, darwin/amd64, linux/arm64, linux/amd64. `flock doctor` finds the bundled binary instead of asking the user to `git clone llama.cpp && cmake`. `flock shard create` works on a fresh cluster with zero manual llama.cpp compilation. Why this matters: until this lands, "shard a 70B across two Macs" is a 30-minute setup, not a one-command UX.
+
+### M4-T15 — Catalog smoke-test harness (CI)
+
+- Owner: BE/DevOps · Effort: M · Depends on: M1-T12
+- Files: `.github/workflows/catalog-smoke.yml`, `internal/catalog/smoke_test.go`
+- Acceptance: A GitHub Actions job (self-hosted runner with at least 24 GB RAM) iterates every YAML in `catalog/`, boots Flock with `FLOCK_DEFAULT_MODEL=<id>`, sends one chat completion via `/v1/chat/completions` and one via `/v1/messages`, and fails the job if any model errors or returns empty. Runs on every PR that touches `catalog/` and nightly on `main`. Prevents catalog entries from drifting into "aspirational" claims like the pre-2026-06 README. Should land before **M4-T06** (catalog expansion).
+
 ---
 
 ## Milestone 5 — v1.0 production
@@ -720,6 +734,12 @@ Goal: production-grade for orgs running this in serious environments.
 - Owner: BE · Effort: L · Depends on: M2.5 sharding code, M5-T03
 - Files: `internal/scheduler/sharding.go`, `internal/scheduler/placement.go`
 - Acceptance: `flock shard create <model>` (no explicit N) computes the right shard count from worker count, model size in GB, and free VRAM per worker; reshards (drains + re-creates) if a worker joins or leaves and the existing split is no longer optimal. Manual override (`--shards N`) still respected.
+
+### M5-T12 — Automatic GGUF distribution
+
+- Owner: BE · Effort: L · Depends on: M4-T14 (rpc-server bundling), M2-T05 (worker process agent)
+- Files: `internal/scheduler/distribute.go`, `internal/models/fetch.go`, `cmd/flock/cmd_model.go`
+- Acceptance: `flock model add hf:owner/repo` downloads the chosen GGUF to the leader and streams it (or makes it fetchable via leader HTTP) to every worker that will host a shard, with checksum verification. `flock shard create <id>` no longer requires the GGUF to be pre-placed by hand. Progress is visible in `flock status` and the web UI. Resume on interrupted transfer. Why this matters: this is the single biggest UX gap for large open-weight models (Qwen3-72B, Llama-3.3-70B, DeepSeek-V3, MiniMax, Nemotron) — today users `wget` GGUFs onto every node manually.
 
 ---
 
