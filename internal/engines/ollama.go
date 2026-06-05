@@ -204,6 +204,15 @@ func (o *Ollama) Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent,
 				return
 			}
 			if ev.Done {
+				// With Stream:false, Ollama returns a single JSON object
+				// that has both done:true AND the full message content.
+				// Emit the Delta first so callers running non-streaming
+				// see the text in the stream, then close with Done+Usage.
+				if ev.Message.Content != "" {
+					if !send(StreamEvent{Delta: ev.Message.Content}) {
+						return
+					}
+				}
 				usage := &Usage{
 					PromptTokens:     ev.PromptEvalCount,
 					CompletionTokens: ev.EvalCount,

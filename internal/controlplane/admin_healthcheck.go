@@ -55,11 +55,14 @@ func (s *Server) healthcheck(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	mt := maxTokens // engines.ChatRequest expects *int
+	// Stream:true matches the convention of the public /v1 handlers —
+	// always stream from the engine, aggregate server-side. Ensures
+	// the engine drivers exercise the same path real client traffic does.
 	stream, err := s.router.Chat(ctx, engines.ChatRequest{
 		Model:     resolved,
 		Messages:  []engines.Message{{Role: "user", Content: "ping"}},
 		MaxTokens: &mt,
-		Stream:    false,
+		Stream:    true,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, healthcheckResult{
