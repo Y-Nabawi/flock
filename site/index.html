@@ -105,6 +105,15 @@
     .anchor-pad { scroll-margin-top: 80px; }
     details > summary { cursor: pointer; list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
+    /* Make action links in the UI mockup look clickable */
+    .ui-panel a { cursor: pointer; text-decoration: none; }
+    .ui-panel a:hover { text-decoration: underline; }
+    /* Smooth tab content transitions */
+    .ui-panel { animation: panelIn 0.15s ease-out; }
+    @keyframes panelIn { from { opacity: 0.4; } to { opacity: 1; } }
+    /* Tables inside the mockup scroll horizontally on small screens */
+    .ui-panel table { min-width: 0; }
+    .ui-panel > div.bg-white { overflow-x: auto; }
   </style>
 </head>
 <body class="bg-white text-slate-900 font-sans antialiased">
@@ -261,25 +270,25 @@ $ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
               </div>
               <div class="text-xs"><span class="text-slate-400">key:</span> <span class="font-mono">sk-orc-xK9p…</span></div>
             </div>
-            <nav class="px-6 flex gap-1 text-sm">
-              <button class="px-4 py-2 bg-slate-800 text-white font-medium">Dashboard</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Nodes</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Models</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Shards</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Tokens</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Usage</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Audit</button>
-              <button class="px-4 py-2 text-slate-300 hover:text-white">Settings</button>
+            <nav class="px-6 flex gap-1 text-sm overflow-x-auto" id="ui-tabs">
+              <button data-tab="dashboard" class="ui-tab px-4 py-2 bg-slate-800 text-white font-medium cursor-pointer transition-colors">Dashboard</button>
+              <button data-tab="nodes" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Nodes</button>
+              <button data-tab="models" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Models</button>
+              <button data-tab="shards" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Shards</button>
+              <button data-tab="tokens" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Tokens</button>
+              <button data-tab="usage" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Usage</button>
+              <button data-tab="audit" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Audit</button>
+              <button data-tab="settings" class="ui-tab px-4 py-2 text-slate-300 hover:text-white cursor-pointer transition-colors">Settings</button>
             </nav>
           </div>
 
-          <!-- dashboard body -->
-          <div class="p-6 space-y-6 bg-slate-50">
+          <!-- ===== TAB: DASHBOARD ===== -->
+          <div class="ui-panel p-6 space-y-6 bg-slate-50" data-panel="dashboard">
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div class="bg-white border border-slate-200 rounded p-4">
                 <div class="text-xs text-slate-500 uppercase tracking-wide">Nodes</div>
-                <div class="text-2xl font-semibold mt-1">3</div>
-                <div class="text-xs text-slate-500 mt-1">all ready</div>
+                <div class="text-2xl font-semibold mt-1">4</div>
+                <div class="text-xs text-slate-500 mt-1">3 ready · 1 draining</div>
               </div>
               <div class="bg-white border border-slate-200 rounded p-4">
                 <div class="text-xs text-slate-500 uppercase tracking-wide">Models</div>
@@ -298,54 +307,244 @@ $ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
               </div>
             </div>
 
-            <div class="bg-white border border-slate-200 rounded p-4">
-              <div class="text-sm font-semibold mb-3">Cluster</div>
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-xs text-slate-500 border-b border-slate-200">
-                    <th class="text-left pb-2 font-semibold">ID</th>
-                    <th class="text-left pb-2 font-semibold">Hostname</th>
-                    <th class="text-left pb-2 font-semibold">Hardware</th>
-                    <th class="text-left pb-2 font-semibold">Loaded model</th>
-                    <th class="text-left pb-2 font-semibold">State</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  <tr>
-                    <td class="py-2.5 font-mono text-xs">local</td>
-                    <td class="py-2.5">mbp-hadi</td>
-                    <td class="py-2.5">M3 / 24 GB</td>
-                    <td class="py-2.5 font-mono text-xs">llama-3.2-1b</td>
-                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
-                  </tr>
-                  <tr>
-                    <td class="py-2.5 font-mono text-xs">n_abc123</td>
-                    <td class="py-2.5">mac-mini-office</td>
-                    <td class="py-2.5">M4 Pro / 64 GB</td>
-                    <td class="py-2.5 font-mono text-xs">qwen-coder-14b</td>
-                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
-                  </tr>
-                  <tr>
-                    <td class="py-2.5 font-mono text-xs">n_def456</td>
-                    <td class="py-2.5">gpu-tower</td>
-                    <td class="py-2.5">2× RTX 5090</td>
-                    <td class="py-2.5 font-mono text-xs">qwen3-72b-awq</td>
-                    <td class="py-2.5"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
             <div class="bg-slate-900 text-emerald-300 rounded p-4 font-mono text-xs leading-relaxed overflow-x-auto">
-<span class="text-slate-500"># Try it from any terminal:</span>
+<span class="text-slate-500"># Quick start: paste your admin key into your tools or use curl:</span>
 $ curl http://localhost:8080/v1/chat/completions \
     -H 'Authorization: Bearer sk-orc-xK9p…' \
     -d '{"model":"auto","messages":[{"role":"user","content":"hi"}]}'</div>
           </div>
+
+          <!-- ===== TAB: NODES ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="nodes">
+            <div class="flex justify-between items-center">
+              <h3 class="text-lg font-semibold">Nodes</h3>
+              <button class="bg-slate-900 text-white text-sm px-3 py-1.5 rounded">Add node…</button>
+            </div>
+            <div class="bg-white border border-slate-200 rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200">
+                  <tr class="text-xs text-slate-500">
+                    <th class="text-left p-3 font-semibold">ID</th>
+                    <th class="text-left p-3 font-semibold">Hostname</th>
+                    <th class="text-left p-3 font-semibold">OS / Arch</th>
+                    <th class="text-left p-3 font-semibold">RAM</th>
+                    <th class="text-left p-3 font-semibold">Address</th>
+                    <th class="text-left p-3 font-semibold">State</th>
+                    <th class="text-left p-3 font-semibold">Last heartbeat</th>
+                    <th class="text-left p-3 font-semibold"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3 font-mono text-xs">local</td><td class="p-3">mbp-hadi</td><td class="p-3">darwin/arm64</td><td class="p-3">24 GB</td><td class="p-3 font-mono text-xs">127.0.0.1:8080</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">just now</td><td class="p-3 text-xs"><a class="text-amber-700">drain</a> · <a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">n_abc123</td><td class="p-3">mac-mini-office</td><td class="p-3">darwin/arm64</td><td class="p-3">64 GB</td><td class="p-3 font-mono text-xs">192.168.1.42:8081</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">3 sec ago</td><td class="p-3 text-xs"><a class="text-amber-700">drain</a> · <a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">n_def456</td><td class="p-3">gpu-tower</td><td class="p-3">linux/amd64</td><td class="p-3">128 GB</td><td class="p-3 font-mono text-xs">192.168.1.50:8081</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">2 sec ago</td><td class="p-3 text-xs"><a class="text-amber-700">drain</a> · <a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">n_ghi789</td><td class="p-3">lab-mac</td><td class="p-3">darwin/arm64</td><td class="p-3">32 GB</td><td class="p-3 font-mono text-xs">192.168.1.60:8081</td><td class="p-3"><span class="pill bg-amber-100 text-amber-700">draining</span></td><td class="p-3 text-xs text-slate-500">12 sec ago</td><td class="p-3 text-xs"><a class="text-amber-700">drain</a> · <a class="text-red-600">remove</a></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ===== TAB: MODELS ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="models">
+            <h3 class="text-lg font-semibold">Installed models</h3>
+            <div class="bg-white border border-slate-200 rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200">
+                  <tr class="text-xs text-slate-500">
+                    <th class="text-left p-3 font-semibold">ID</th>
+                    <th class="text-left p-3 font-semibold">Status</th>
+                    <th class="text-left p-3 font-semibold">Source</th>
+                    <th class="text-left p-3 font-semibold">Size</th>
+                    <th class="text-left p-3 font-semibold">Installed</th>
+                    <th class="text-left p-3 font-semibold"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:llama3.2:1b</td><td class="p-3">1.3 GB</td><td class="p-3 text-xs text-slate-500">2 days ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:qwen2.5-coder:7b</td><td class="p-3">4.7 GB</td><td class="p-3 text-xs text-slate-500">1 day ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:qwen2.5-coder:14b</td><td class="p-3">9.0 GB</td><td class="p-3 text-xs text-slate-500">3 hours ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">qwen3-72b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">vllm:Qwen/Qwen3-72B-Instruct-AWQ</td><td class="p-3">42 GB</td><td class="p-3 text-xs text-slate-500">just now</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">sharded</span></td><td class="p-3 font-mono text-xs">llamacpp:/var/lib/flock/…q4_k_m.gguf</td><td class="p-3">42 GB</td><td class="p-3 text-xs text-slate-500">5 min ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Add a model from the catalog</div>
+              <div class="flex gap-2 items-end flex-wrap">
+                <div class="flex-1 min-w-[260px]">
+                  <label class="text-xs text-slate-500">Catalog entry</label>
+                  <select class="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white">
+                    <option>— pick a model —</option>
+                    <option>llama-3.2-3b — Llama 3.2 3B Instruct · 2.0 GB</option>
+                    <option>qwen-coder-32b — Qwen 2.5 Coder 32B · 19.8 GB</option>
+                    <option>llama-3.3-70b-sharded — Llama 3.3 70B (sharded) · 42.9 GB (sharded)</option>
+                  </select>
+                </div>
+                <button class="bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-medium">Install</button>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Sharded models auto-delegate to the shard orchestrator.</p>
+            </div>
+          </div>
+
+          <!-- ===== TAB: SHARDS ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="shards">
+            <div>
+              <h3 class="text-lg font-semibold">Sharded models</h3>
+              <p class="text-xs text-slate-500 mt-1">One model split across multiple nodes via llama.cpp RPC. The coordinator runs on the leader; rpc-server runs on each shard host.</p>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Create new sharded model</div>
+              <div class="flex gap-2 items-end flex-wrap">
+                <div class="flex-1 min-w-[180px]"><label class="text-xs text-slate-500">Catalog model id</label><input type="text" placeholder="e.g. llama-3.3-70b" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" /></div>
+                <div class="w-24"><label class="text-xs text-slate-500">Shards</label><input type="number" value="2" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" /></div>
+                <button class="bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-medium">Create</button>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded">
+              <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <div class="font-semibold">llama-3.3-70b-sharded</div>
+                  <div class="text-xs text-slate-500">3 shards</div>
+                </div>
+                <button class="text-red-600 text-sm">Tear down</button>
+              </div>
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200"><tr class="text-xs text-slate-500"><th class="text-left p-3 font-semibold">Role</th><th class="text-left p-3 font-semibold">Node</th><th class="text-left p-3 font-semibold">Address</th><th class="text-left p-3 font-semibold">Status</th><th class="text-left p-3 font-semibold">Last seen</th></tr></thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3"><span class="pill bg-blue-100 text-blue-700">coordinator</span></td><td class="p-3 font-mono text-xs">local</td><td class="p-3 font-mono text-xs">127.0.0.1:9001</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">just now</td></tr>
+                  <tr><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">rpc</span></td><td class="p-3 font-mono text-xs">n_abc123</td><td class="p-3 font-mono text-xs">192.168.1.42:50052</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">just now</td></tr>
+                  <tr><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">rpc</span></td><td class="p-3 font-mono text-xs">n_def456</td><td class="p-3 font-mono text-xs">192.168.1.50:50052</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 text-xs text-slate-500">just now</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>Prereqs:</strong> The leader needs <code class="font-mono">llama-server</code> (<code class="font-mono">brew install llama.cpp</code>); each worker needs <code class="font-mono">rpc-server</code> on PATH; the catalog entry needs <code class="font-mono">sharding.required: true</code> and a local GGUF path.
+            </div>
+          </div>
+
+          <!-- ===== TAB: TOKENS ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="tokens">
+            <h3 class="text-lg font-semibold">API keys</h3>
+            <div class="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+              <strong>Heads-up:</strong> "node" scope tokens are the shared secret between leader and worker. They are stored plaintext on the leader. Only issue on a trusted network (LAN or Tailscale). See the Settings tab for the full security model.
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200"><tr class="text-xs text-slate-500"><th class="text-left p-3 font-semibold">ID</th><th class="text-left p-3 font-semibold">Name</th><th class="text-left p-3 font-semibold">Scope</th><th class="text-left p-3 font-semibold">User</th><th class="text-left p-3 font-semibold">Daily quota</th><th class="text-left p-3 font-semibold">Status</th><th class="text-left p-3 font-semibold">Created</th><th class="text-left p-3 font-semibold"></th></tr></thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3 font-mono text-xs">k_initial</td><td class="p-3">initial-admin</td><td class="p-3"><span class="pill bg-red-100 text-red-700">admin</span></td><td class="p-3 text-slate-500">admin</td><td class="p-3 text-slate-400">∞</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">active</span></td><td class="p-3 text-xs text-slate-500">3 days ago</td><td class="p-3 text-xs"><a class="text-red-600">revoke</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">k_xY3vP</td><td class="p-3">alice</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">user</span></td><td class="p-3">alice</td><td class="p-3">100,000</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">active</span></td><td class="p-3 text-xs text-slate-500">1 day ago</td><td class="p-3 text-xs"><a class="text-red-600">revoke</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">k_n9LqR</td><td class="p-3">bob</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">user</span></td><td class="p-3">bob</td><td class="p-3">200,000</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">active</span></td><td class="p-3 text-xs text-slate-500">1 day ago</td><td class="p-3 text-xs"><a class="text-red-600">revoke</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">k_join01</td><td class="p-3">mac-mini-join</td><td class="p-3"><span class="pill bg-amber-100 text-amber-700">node</span></td><td class="p-3 text-slate-500">—</td><td class="p-3 text-slate-400">∞</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">active</span></td><td class="p-3 text-xs text-slate-500">2 hours ago</td><td class="p-3 text-xs"><a class="text-red-600">revoke</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">k_old</td><td class="p-3">eve-old</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">user</span></td><td class="p-3">eve</td><td class="p-3">100,000</td><td class="p-3"><span class="pill bg-red-100 text-red-700">revoked</span></td><td class="p-3 text-xs text-slate-500">last week</td><td class="p-3 text-xs"></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Create a new key</div>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                <div><label class="text-xs text-slate-500">Name</label><input type="text" placeholder="charlie" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" /></div>
+                <div><label class="text-xs text-slate-500">Scope</label><select class="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"><option>user</option><option>admin</option><option>node</option></select></div>
+                <div><label class="text-xs text-slate-500">Daily quota (0=∞)</label><input type="number" value="0" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" /></div>
+                <button class="bg-slate-900 text-white py-1.5 rounded text-sm font-medium">Create</button>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">New keys are shown once in a modal — save them immediately.</p>
+            </div>
+          </div>
+
+          <!-- ===== TAB: USAGE ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="usage">
+            <h3 class="text-lg font-semibold">Recent requests</h3>
+            <div class="bg-white border border-slate-200 rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200"><tr class="text-xs text-slate-500"><th class="text-left p-3 font-semibold">Time</th><th class="text-left p-3 font-semibold">User</th><th class="text-left p-3 font-semibold">Model</th><th class="text-left p-3 font-semibold">Protocol</th><th class="text-left p-3 font-semibold">Prompt</th><th class="text-left p-3 font-semibold">Completion</th><th class="text-left p-3 font-semibold">Latency</th><th class="text-left p-3 font-semibold">Outcome</th></tr></thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3 text-xs">14:32:08</td><td class="p-3">alice</td><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">openai</span></td><td class="p-3">412</td><td class="p-3">128</td><td class="p-3 text-xs">1,832 ms</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ok</span></td></tr>
+                  <tr><td class="p-3 text-xs">14:31:55</td><td class="p-3">bob</td><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3"><span class="pill bg-purple-100 text-purple-700">anthropic</span></td><td class="p-3">28</td><td class="p-3">45</td><td class="p-3 text-xs">312 ms</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ok</span></td></tr>
+                  <tr><td class="p-3 text-xs">14:31:42</td><td class="p-3">alice</td><td class="p-3 font-mono text-xs">claude-opus-4-7</td><td class="p-3"><span class="pill bg-purple-100 text-purple-700">anthropic</span></td><td class="p-3">2,840</td><td class="p-3">1,205</td><td class="p-3 text-xs">8,541 ms</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ok</span></td></tr>
+                  <tr><td class="p-3 text-xs">14:31:21</td><td class="p-3">bob</td><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">openai</span></td><td class="p-3">198</td><td class="p-3">82</td><td class="p-3 text-xs">1,021 ms</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ok</span></td></tr>
+                  <tr><td class="p-3 text-xs">14:30:58</td><td class="p-3">alice</td><td class="p-3 font-mono text-xs">qwen-coder-32b</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">openai</span></td><td class="p-3">0</td><td class="p-3">0</td><td class="p-3 text-xs">0 ms</td><td class="p-3"><span class="pill bg-amber-100 text-amber-700">rate_limited</span></td></tr>
+                  <tr><td class="p-3 text-xs">14:30:31</td><td class="p-3">bob</td><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3"><span class="pill bg-purple-100 text-purple-700">anthropic</span></td><td class="p-3">512</td><td class="p-3">312</td><td class="p-3 text-xs">3,712 ms</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ok</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ===== TAB: AUDIT ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="audit">
+            <h3 class="text-lg font-semibold">Audit log</h3>
+            <div class="bg-white border border-slate-200 rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-slate-50 border-b border-slate-200"><tr class="text-xs text-slate-500"><th class="text-left p-3 font-semibold">Time</th><th class="text-left p-3 font-semibold">Actor</th><th class="text-left p-3 font-semibold">Action</th><th class="text-left p-3 font-semibold">Target</th></tr></thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="p-3 text-xs">14:32:18</td><td class="p-3">initial-admin</td><td class="p-3 font-mono text-xs">POST /admin/v1/shards/create</td><td class="p-3 font-mono text-xs">192.168.1.10:54231</td></tr>
+                  <tr><td class="p-3 text-xs">14:31:02</td><td class="p-3">initial-admin</td><td class="p-3 font-mono text-xs">POST /admin/v1/tokens</td><td class="p-3 font-mono text-xs">192.168.1.10:54201</td></tr>
+                  <tr><td class="p-3 text-xs">14:28:44</td><td class="p-3">initial-admin</td><td class="p-3 font-mono text-xs">POST /admin/v1/nodes/n_ghi789/drain</td><td class="p-3 font-mono text-xs">192.168.1.10:54180</td></tr>
+                  <tr><td class="p-3 text-xs">14:15:21</td><td class="p-3">eve</td><td class="p-3 font-mono text-xs">egress.anthropic</td><td class="p-3 font-mono text-xs">claude-opus-4-7</td></tr>
+                  <tr><td class="p-3 text-xs">12:02:18</td><td class="p-3">initial-admin</td><td class="p-3 font-mono text-xs">DELETE /admin/v1/tokens/k_old</td><td class="p-3 font-mono text-xs">192.168.1.10:53811</td></tr>
+                  <tr><td class="p-3 text-xs">10:48:09</td><td class="p-3">initial-admin</td><td class="p-3 font-mono text-xs">POST /admin/v1/models</td><td class="p-3 font-mono text-xs">192.168.1.10:53120</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ===== TAB: SETTINGS ===== -->
+          <div class="ui-panel hidden p-6 space-y-4 bg-slate-50" data-panel="settings">
+            <h3 class="text-lg font-semibold">Settings</h3>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Server</div>
+              <div class="space-y-1 text-sm">
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">listen</span><span class="font-mono text-xs">:8080</span></div>
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">data_dir</span><span class="font-mono text-xs">~/.flock</span></div>
+                <div class="flex justify-between py-1"><span class="text-slate-600">log_level</span><span class="font-mono text-xs">info</span></div>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Engine</div>
+              <div class="space-y-1 text-sm">
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">preferred</span><span class="font-mono text-xs">ollama</span></div>
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">ollama_endpoint</span><span class="font-mono text-xs">http://127.0.0.1:11434</span></div>
+                <div class="flex justify-between py-1"><span class="text-slate-600">vllm_api_key</span><span class="font-mono text-xs text-slate-400">(unset)</span></div>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200 rounded p-4">
+              <div class="text-sm font-semibold mb-2">Router &amp; fallback</div>
+              <div class="space-y-1 text-sm">
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">default_model</span><span class="font-mono text-xs">llama-3.2-1b</span></div>
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">fallback.enabled</span><span class="font-mono text-xs">true</span></div>
+                <div class="flex justify-between border-b border-slate-100 py-1"><span class="text-slate-600">fallback.anthropic_key</span><span class="font-mono text-xs">sk-ant-…oFmK</span></div>
+                <div class="flex justify-between py-1"><span class="text-slate-600">fallback.openai_key</span><span class="font-mono text-xs text-slate-400">(unset)</span></div>
+              </div>
+            </div>
+
+            <div class="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
+              <div class="font-semibold mb-1">To change settings</div>
+              <div>Edit <code class="font-mono text-xs">~/.flock/config.yaml</code> or set <code class="font-mono text-xs">ANTHROPIC_API_KEY</code> / <code class="font-mono text-xs">OPENAI_API_KEY</code> / <code class="font-mono text-xs">FLOCK_*</code> env vars, then restart flock.</div>
+            </div>
+
+            <div class="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-900">
+              <div class="font-semibold mb-1">🔒 Security model — LAN trust</div>
+              <ul class="list-disc list-inside space-y-1">
+                <li><strong>User API keys</strong> hashed (sha256); plaintext shown once at creation.</li>
+                <li><strong>Worker tokens</strong> are stored plaintext in <code class="font-mono text-xs">nodes.worker_token</code> — assumes a trusted network.</li>
+                <li><strong>Worker HTTP servers</strong> bind to the mesh address (LAN / tailnet IP), never 0.0.0.0.</li>
+              </ul>
+              <div class="mt-2">For hostile networks, run the cluster behind Tailscale until v0.5 lands HMAC mutual auth.</div>
+            </div>
+          </div>
         </div>
 
         <p class="mt-6 text-sm text-slate-500 text-center">
-          Mocked preview — actual UI ships embedded in the Flock binary. <a href="https://github.com/hadihonarvar/flock/blob/main/internal/ui/index.html" class="underline">View the real source on GitHub →</a>
+          Mocked preview — <strong>click any tab above</strong> to navigate. The real UI ships embedded in the Flock binary. <a href="https://github.com/hadihonarvar/flock/blob/main/internal/ui/index.html" class="underline">View the real source on GitHub →</a>
         </p>
       </div>
     </section>
@@ -929,7 +1128,7 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
     </div>
   </footer>
 
-  <!-- Minimal vanilla JS for OS tabs -->
+  <!-- Vanilla JS: OS tabs + Dashboard mockup tab switcher -->
   <script>
     function showOS(os) {
       const mac = document.getElementById('os-mac');
@@ -948,6 +1147,28 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
         tabMac.className = 'px-4 py-2 rounded-t-lg bg-slate-200 text-slate-700 text-sm font-medium';
       }
     }
+
+    // Dashboard mockup tab switcher — click any tab in the preview UI to
+    // switch the visible panel underneath. Matches the real embedded UI.
+    document.querySelectorAll('.ui-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.tab;
+        document.querySelectorAll('.ui-tab').forEach((b) => {
+          if (b.dataset.tab === target) {
+            b.className = 'ui-tab px-4 py-2 bg-slate-800 text-white font-medium';
+          } else {
+            b.className = 'ui-tab px-4 py-2 text-slate-300 hover:text-white';
+          }
+        });
+        document.querySelectorAll('.ui-panel').forEach((p) => {
+          if (p.dataset.panel === target) {
+            p.classList.remove('hidden');
+          } else {
+            p.classList.add('hidden');
+          }
+        });
+      });
+    });
   </script>
 </body>
 </html>
