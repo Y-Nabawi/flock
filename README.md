@@ -817,50 +817,89 @@ All admin endpoints require an admin key (`flock token create --type=admin`).
 
 ## CLI reference
 
+Every admin action is available via the CLI **and** the web UI — full parity since v0.4.
+
 ```
-flock up                    Start the local node (leader on first run)
-flock down                  Stop the local node
-flock status                Show local + cluster status
-flock join <url>?token=…    Join an existing cluster
+# --- lifecycle (CLI only — UI can't kill the process running the UI) ---
+flock up                          Start the local node (leader on first run)
+flock down                        Stop the local node
+flock status                      Show local + cluster status
+flock join <url>?token=…          Join an existing cluster as a worker
+flock doctor                      Diagnose common problems
+flock version                     Print version
 
-flock node ls                       List nodes
-flock node show <id>                Inspect a node
-flock node drain <id>               Migrate models off a node
-flock node remove <id>              Forget a node
+# --- nodes ---
+flock node ls                     List nodes
+flock node show <id>              Inspect a node
+flock node drain <id>             Drain a node (no new requests routed to it)
+flock node remove <id>            Forget a node
 
-flock model search <query>          Search catalog
-flock model ls                      List installed models
-flock model add <id>                Install a model
-flock model remove <id>             Remove a model
-flock model adapter add <name> …    Install a LoRA adapter
+# --- models (non-sharded) ---
+flock model search <query>        Search catalog
+flock model ls                    List installed models
+flock model add <id>              Install a model (auto-delegates if sharded)
+flock model remove <id>           Uninstall a model
 
-flock user ls                       List users
-flock user invite <email>           Generate OIDC invite
-flock token create --type=…         Issue an API or node token
-flock token ls                      List tokens
-flock token revoke <id>             Revoke a token
+# --- sharded models (one model split across N machines) ---
+flock shard create <model> [N]    Orchestrate a sharded model across N workers
+flock shard ls                    List shards across all sharded models
+flock shard remove <model>        Tear down a sharded model
 
-flock usage                         Show usage stats
+# --- API keys / tokens ---
+flock token create [name]         Issue an API key (--admin, --node)
+flock token ls                    List API keys
+flock token revoke <id>           Revoke a key
 
-flock config get|set                Read/write config
-flock logs [--node <id>]            Tail logs
-flock doctor                        Diagnose common problems
-flock version                       Print version
+# --- observability (CLI new in v0.4 — was UI-only before) ---
+flock usage [--limit N] [--user X]   Show recent inference usage records
+flock audit [--limit N] [--actor X]  Show recent admin audit log entries
+
+# --- config (CLI new in v0.4) ---
+flock config show [--json]        Show effective runtime config (secrets redacted)
+flock config path                 Print config file path
+flock config edit                 Print the editor command for the config file
 ```
 
 ---
 
 ## Web UI
 
-- **Dashboard** — cluster health, requests/min, top models, top users, cost saved vs. API
-- **Nodes** — every machine in the cluster, hardware, models, requests
-- **Models** — what's installed, where, performance; "Add model" wizard
-- **Users** — per-dev usage, quota status, key management
-- **Settings** — config editor, OIDC setup, fallback provider keys
-- **Playground** — chat with any model directly in the browser
-- **Logs** — live tail of requests, filterable by user/model/node
+The UI is shipped embedded in the Go binary via `//go:embed`. It is *not* a separate deployment. Open `http://localhost:8080` and paste the admin key.
 
-The UI is shipped embedded in the Go binary via `//go:embed`. It is *not* a separate deployment.
+All admin actions are also doable via CLI — see the [CLI reference](#cli-reference).
+
+| Tab | Capabilities |
+|---|---|
+| **Dashboard** | Cluster summary: nodes, models, recent request count, tokens served, copy-paste curl example with your admin key |
+| **Nodes** | List + status; **Add node** wizard generates a join token; per-row **drain** and **remove** buttons |
+| **Models** | List installed models; **catalog picker** dropdown to install a new one; per-row **remove** button (auto-handles sharded teardown) |
+| **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
+| **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
+| **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome |
+| **Audit** | Recent admin actions with actor + action + target |
+| **Settings** | Read-only effective config with secrets redacted; instructions for editing `~/.flock/config.yaml` and the env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `FLOCK_*`) |
+
+## CLI vs UI parity (v0.4)
+
+Every cluster action is available both ways. Pick whichever fits your workflow:
+
+| Action | CLI | UI |
+|---|---|---|
+| Add node | `flock token create --node` → `flock join <url>?token=…` on worker | Nodes tab → "Add node…" |
+| Drain node | `flock node drain <id>` | Nodes tab → row's "drain" |
+| Remove node | `flock node remove <id>` | Nodes tab → row's "remove" |
+| Install model | `flock model add <id>` | Models tab → catalog picker → "Install" |
+| Remove model | `flock model remove <id>` | Models tab → row's "remove" |
+| Create sharded model | `flock shard create <model> [N]` | Shards tab → "Create sharded model" |
+| Tear down sharded model | `flock shard remove <model>` | Shards tab → "Tear down" |
+| Create API key | `flock token create <name>` | Tokens tab → "Create" form |
+| Revoke API key | `flock token revoke <id>` | Tokens tab → row's "revoke" |
+| View recent usage | `flock usage` | Usage tab |
+| View audit log | `flock audit` | Audit tab |
+| View effective config | `flock config show` | Settings tab |
+| Edit config | edit `~/.flock/config.yaml`, restart | (read-only via UI; CLI shows the path) |
+
+**The only thing that can't be done from the UI**: starting / stopping `flock up` itself — the UI is served by that process, so it can't safely tear itself down. Use `flock up` / `flock down` from the terminal.
 
 ---
 

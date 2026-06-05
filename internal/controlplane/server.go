@@ -151,13 +151,34 @@ func (s *Server) routes() http.Handler {
 		// Everything else is admin only.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireScope("admin"))
+
+			// Nodes
 			r.Get("/nodes", s.listNodes)
+			r.Post("/nodes/{id}/drain", s.drainNode)
+			r.Delete("/nodes/{id}", s.deleteNode)
+
+			// Models
 			r.Get("/models", s.listInstalledModels)
+			r.Get("/catalog", s.listCatalog)
+			r.Post("/models", s.addModel)
+			r.Delete("/models/{id}", s.deleteModel)
+
+			// Tokens
+			r.Get("/tokens", s.listTokens)
+			r.Post("/tokens", s.createToken)
+			r.Delete("/tokens/{id}", s.revokeToken)
+
+			// Observability
 			r.Get("/usage/recent", s.listUsageRecent)
 			r.Get("/audit/recent", s.listAuditRecent)
+
+			// Shards
 			r.Get("/shards", s.listShards)
 			r.Post("/shards/create", s.createShards)
 			r.Delete("/shards/{model_id}", s.deleteShards)
+
+			// Config (read-only sanitized view)
+			r.Get("/config", s.getConfig)
 		})
 	})
 
@@ -331,6 +352,295 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ---- node admin ----
+
+func (s *Server) drainNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	n, err := s.store.Nodes().Get(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n == nil {
+		writeJSONError(w, http.StatusNotFound, "no such node: "+id)
+		return
+	}
+	n.State = "draining"
+	if err := s.store.Nodes().Upsert(r.Context(), *n); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "draining", "id": id})
+}
+
+func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.store.Nodes().Delete(r.Context(), id); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Also clean up placements for the removed node so the router doesn't
+	// keep trying it.
+	if ps, _ := s.store.Placements().GetByNode(r.Context(), id); ps != nil {
+		for _, p := range ps {
+			_ = s.store.Placements().Delete(r.Context(), p.NodeID, p.ModelID)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id})
+}
+
+// ---- model admin ----
+
+func (s *Server) listCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.cat)
+}
+
+func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	entry := models.FindByID(s.cat, req.ID)
+	if entry == nil {
+		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ID)
+		return
+	}
+	// Sharded models delegate to the orchestrator.
+	if entry.Sharding.Required {
+		if s.orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
+			return
+		}
+		if err := s.orch.CreateSharded(r.Context(), *entry, 0); err != nil {
+			writeJSONError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		s.router.InvalidateModel(req.ID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "sharded"})
+		return
+	}
+	// Non-sharded: pull via the local engine.
+	engineName := ""
+	switch s.engine.Name() {
+	case "ollama":
+		engineName = entry.Source.OllamaName
+	case "vllm", "mlx", "mlx-lm":
+		engineName = entry.Source.Repo
+	}
+	if engineName == "" {
+		engineName = entry.ID
+	}
+	// Synchronous pull — may take minutes. Future: stream progress via SSE.
+	if err := s.engine.Pull(r.Context(), engineName, nil); err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	_ = s.store.Models().Upsert(r.Context(), store.Model{
+		ID: entry.ID, CatalogID: entry.ID,
+		Source: s.engine.Name() + ":" + engineName,
+		Status: "ready", SizeBytes: entry.SizeBytes,
+		InstalledAt: time.Now(),
+	})
+	_ = s.store.Placements().Upsert(r.Context(), store.Placement{
+		NodeID: "local", ModelID: engineName, Status: "ready", LastSeen: time.Now(),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "local"})
+}
+
+func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Sharded model? Tear down via the orchestrator.
+	shards, _ := s.store.Shards().GetByModel(r.Context(), id)
+	if len(shards) > 0 {
+		if s.orch == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "sharding orchestrator not configured")
+			return
+		}
+		if err := s.orch.RemoveSharded(r.Context(), id); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.router.InvalidateModel(id)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "sharded"})
+		return
+	}
+	// Non-sharded: delete from store + engine.
+	m, _ := s.store.Models().Get(r.Context(), id)
+	if m != nil {
+		engineName := id
+		if idx := indexByte(m.Source, ':'); idx >= 0 && idx < len(m.Source)-1 {
+			engineName = m.Source[idx+1:]
+		}
+		_ = s.engine.Delete(r.Context(), engineName)
+		_ = s.store.Placements().Delete(r.Context(), "local", engineName)
+	}
+	if err := s.store.Models().Delete(r.Context(), id); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "local"})
+}
+
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// ---- token admin ----
+
+type tokenView struct {
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Scope            string    `json:"scope"`
+	UserID           string    `json:"user_id"`
+	QuotaDailyTokens int64     `json:"quota_daily_tokens"`
+	Revoked          bool      `json:"revoked"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.store.APIKeys().List(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]tokenView, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, tokenView{
+			ID: k.ID, Name: k.Name, Scope: k.Scope, UserID: k.UserID,
+			QuotaDailyTokens: k.QuotaDailyTokens,
+			Revoked:          k.Revoked, CreatedAt: k.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		Name             string `json:"name"`
+		Scope            string `json:"scope"` // admin | user | node
+		UserID           string `json:"user_id"`
+		QuotaDailyTokens int64  `json:"quota_daily_tokens"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeJSONError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if req.Scope == "" {
+		req.Scope = "user"
+	}
+	if req.Scope != "admin" && req.Scope != "user" && req.Scope != "node" {
+		writeJSONError(w, http.StatusBadRequest, "scope must be admin|user|node")
+		return
+	}
+	userID := req.UserID
+	if userID == "" && req.Scope != "node" {
+		userID = req.Name
+	}
+	plain, rec, err := auth.Generate(req.Name, req.Scope, userID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rec.QuotaDailyTokens = req.QuotaDailyTokens
+	if err := s.store.APIKeys().Create(r.Context(), rec); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":         rec.ID,
+		"name":       rec.Name,
+		"scope":      rec.Scope,
+		"plaintext":  plain, // shown ONCE; caller must save it now
+		"created_at": rec.CreatedAt,
+	})
+}
+
+func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.store.APIKeys().Revoke(r.Context(), id); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "id": id})
+}
+
+// ---- config view ----
+
+// getConfig returns a sanitized view of the effective config (secrets
+// redacted). Editing is still file-based for v0.4 — too easy to brick a
+// running cluster via a typo'd HTTP PUT.
+func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	type view struct {
+		Listen      string                 `json:"listen"`
+		ExternalURL string                 `json:"external_url"`
+		DataDir     string                 `json:"data_dir"`
+		LogLevel    string                 `json:"log_level"`
+		Engine      map[string]string      `json:"engine"`
+		Router      map[string]any         `json:"router"`
+		Storage     map[string]string      `json:"storage"`
+		Auth        map[string]any         `json:"auth"`
+		EditHint    string                 `json:"edit_hint"`
+	}
+	v := view{
+		Listen:      s.cfg.Listen,
+		ExternalURL: s.cfg.ExternalURL,
+		DataDir:     s.cfg.DataDir,
+		LogLevel:    s.cfg.LogLevel,
+		Engine: map[string]string{
+			"preferred":       s.cfg.Engine.Preferred,
+			"ollama_endpoint": s.cfg.Engine.OllamaEndpoint,
+			"vllm_endpoint":   s.cfg.Engine.VLLMEndpoint,
+			"vllm_api_key":    redact(s.cfg.Engine.VLLMAPIKey),
+			"mlx_endpoint":    s.cfg.Engine.MLXEndpoint,
+		},
+		Router: map[string]any{
+			"default_model":   s.cfg.Router.DefaultModel,
+			"sticky_sessions": s.cfg.Router.StickySessions,
+			"fallback": map[string]any{
+				"enabled":       s.cfg.Router.Fallback.Enabled,
+				"anthropic_url": s.cfg.Router.Fallback.AnthropicURL,
+				"openai_url":    s.cfg.Router.Fallback.OpenAIURL,
+				"anthropic_key": redact(s.cfg.Router.Fallback.AnthropicKey),
+				"openai_key":    redact(s.cfg.Router.Fallback.OpenAIKey),
+			},
+		},
+		Storage: map[string]string{
+			"type":       s.cfg.Storage.Type,
+			"dsn":        s.cfg.Storage.DSN,
+			"models_dir": s.cfg.Storage.ModelsDir,
+		},
+		Auth: map[string]any{
+			"require_keys": s.cfg.Auth.RequireKeys,
+		},
+		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set ANTHROPIC_API_KEY / OPENAI_API_KEY / FLOCK_* env vars, then restart flock.",
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func redact(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 10 {
+		return "set (redacted)"
+	}
+	return s[:6] + "…" + s[len(s)-4:]
 }
 
 // ---- shard endpoints ----

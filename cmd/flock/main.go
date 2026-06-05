@@ -39,6 +39,12 @@ func main() {
 		cmdShard(args)
 	case "token":
 		cmdToken(args)
+	case "usage":
+		cmdUsage(args)
+	case "audit":
+		cmdAudit(args)
+	case "config":
+		cmdConfig(args)
 	case "doctor":
 		cmdDoctor(args)
 	case "help", "--help", "-h":
@@ -75,6 +81,11 @@ Commands:
   token create [name]      Issue an API key (--admin, --node)
   token ls                 List API keys
   token revoke <id>        Revoke an API key
+  usage [--limit N]        Show recent inference usage records
+  audit [--limit N]        Show recent admin audit log entries
+  config show              Show effective runtime config (secrets redacted)
+  config path              Print config file path
+  config edit              Print the editor command to edit config
   doctor                   Diagnose common problems
   version                  Print version
   help                     Show this help
