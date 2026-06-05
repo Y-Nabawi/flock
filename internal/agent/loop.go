@@ -9,16 +9,20 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/hadihonarvar/flock/internal/engines"
 )
 
 // Agent is the per-node loop on a worker. It registers with the leader on
-// startup, then sends a heartbeat at HeartbeatInterval.
+// startup, then sends a heartbeat at HeartbeatInterval carrying the list of
+// models currently loaded on the local engine.
 type Agent struct {
 	NodeID       string
 	LeaderURL    string
 	Token        string
 	Address      string
 	Capabilities Capabilities
+	Engine       engines.Engine // local engine; queried for loaded_models
 
 	HTTP              *http.Client
 	HeartbeatInterval time.Duration
@@ -40,10 +44,25 @@ func (a *Agent) Register(ctx context.Context) error {
 	return err
 }
 
-// Heartbeat sends a lightweight ping to keep the leader informed we're alive.
+// Heartbeat sends a lightweight ping to keep the leader informed we're alive,
+// including the list of models the local engine currently has loaded so the
+// leader can update its placements table.
+//
 // Returns the HTTP status code so Loop can react differently to 401/404.
 func (a *Agent) Heartbeat(ctx context.Context) (int, error) {
-	body, _ := json.Marshal(map[string]any{"id": a.NodeID})
+	var loaded []string
+	if a.Engine != nil {
+		// best-effort — a slow engine shouldn't block the heartbeat
+		listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if m, err := a.Engine.List(listCtx); err == nil {
+			loaded = m
+		}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"id":            a.NodeID,
+		"loaded_models": loaded,
+	})
 	return a.post(ctx, "/admin/v1/nodes/heartbeat", body)
 }
 

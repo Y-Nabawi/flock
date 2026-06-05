@@ -21,6 +21,7 @@ type Store interface {
 	APIKeys() APIKeyStore
 	Models() ModelStore
 	Nodes() NodeStore
+	Placements() PlacementStore
 	Usage() UsageStore
 	Audit() AuditStore
 	Close() error
@@ -33,9 +34,9 @@ type APIKey struct {
 	ID               string
 	Hash             string
 	Name             string
-	Scope            string // "admin" | "user"
-	UserID           string // free-form owner identifier; empty for legacy keys
-	QuotaDailyTokens int64  // 0 = unlimited
+	Scope            string // "admin" | "user" | "node"
+	UserID           string
+	QuotaDailyTokens int64
 	CreatedAt        time.Time
 	Revoked          bool
 }
@@ -64,13 +65,20 @@ type ModelStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// Node represents a worker registered with the control plane.
+//
+// WorkerToken is a long-lived shared secret used for BOTH directions of
+// communication between the leader and this worker. v0.3 stores it in
+// plaintext for simplicity — a future revision will replace this with
+// per-direction HMAC keys.
 type Node struct {
 	ID            string
 	Hostname      string
 	OS            string
 	Arch          string
 	RAMGB         int
-	Address       string // host:port reachable from the leader
+	Address       string
+	WorkerToken   string
 	HardwareJSON  string
 	LastHeartbeat time.Time
 	State         string
@@ -83,6 +91,23 @@ type NodeStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// Placement records that a given node currently hosts a given model.
+// The special node id "local" represents the leader's own engine.
+type Placement struct {
+	NodeID   string
+	ModelID  string
+	Status   string // ready | loading | error
+	LastSeen time.Time
+}
+
+type PlacementStore interface {
+	Upsert(ctx context.Context, p Placement) error
+	GetByModel(ctx context.Context, modelID string) ([]Placement, error)
+	GetByNode(ctx context.Context, nodeID string) ([]Placement, error)
+	ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error
+	Delete(ctx context.Context, nodeID, modelID string) error
+}
+
 // Usage records a single completed inference request.
 type Usage struct {
 	ID               int64
@@ -90,11 +115,11 @@ type Usage struct {
 	APIKeyID         string
 	UserID           string
 	Model            string
-	Protocol         string // openai | anthropic
+	Protocol         string
 	PromptTokens     int
 	CompletionTokens int
 	LatencyMS        int
-	Outcome          string // ok | error | rate_limited
+	Outcome          string
 }
 
 type UsageStore interface {
@@ -108,10 +133,10 @@ type UsageStore interface {
 type AuditEntry struct {
 	ID       int64
 	TS       time.Time
-	Actor    string // user id or "system"
+	Actor    string
 	Action   string
 	Target   string
-	Metadata string // JSON-encoded extras
+	Metadata string
 }
 
 type AuditStore interface {
@@ -141,12 +166,13 @@ type sqliteStore struct {
 	db *sql.DB
 }
 
-func (s *sqliteStore) APIKeys() APIKeyStore { return &sqliteAPIKeys{db: s.db} }
-func (s *sqliteStore) Models() ModelStore   { return &sqliteModels{db: s.db} }
-func (s *sqliteStore) Nodes() NodeStore     { return &sqliteNodes{db: s.db} }
-func (s *sqliteStore) Usage() UsageStore    { return &sqliteUsage{db: s.db} }
-func (s *sqliteStore) Audit() AuditStore    { return &sqliteAudit{db: s.db} }
-func (s *sqliteStore) Close() error         { return s.db.Close() }
+func (s *sqliteStore) APIKeys() APIKeyStore       { return &sqliteAPIKeys{db: s.db} }
+func (s *sqliteStore) Models() ModelStore         { return &sqliteModels{db: s.db} }
+func (s *sqliteStore) Nodes() NodeStore           { return &sqliteNodes{db: s.db} }
+func (s *sqliteStore) Placements() PlacementStore { return &sqlitePlacements{db: s.db} }
+func (s *sqliteStore) Usage() UsageStore          { return &sqliteUsage{db: s.db} }
+func (s *sqliteStore) Audit() AuditStore          { return &sqliteAudit{db: s.db} }
+func (s *sqliteStore) Close() error               { return s.db.Close() }
 
 const schema = `
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -177,10 +203,20 @@ CREATE TABLE IF NOT EXISTS nodes (
     arch           TEXT NOT NULL,
     ram_gb         INTEGER NOT NULL,
     address        TEXT NOT NULL DEFAULT '',
+    worker_token   TEXT NOT NULL DEFAULT '',
     hardware_json  TEXT NOT NULL,
     last_heartbeat INTEGER NOT NULL,
     state          TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS model_placements (
+    node_id    TEXT NOT NULL,
+    model_id   TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    PRIMARY KEY (node_id, model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_placements_model ON model_placements(model_id);
 
 CREATE TABLE IF NOT EXISTS usage (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,8 +250,7 @@ func applySchema(ctx context.Context, db *sql.DB) error {
 }
 
 // appendPragmas safely appends the required pragma settings to a DSN that
-// may already contain a query string. modernc's sqlite driver supports
-// multiple `_pragma=` params separated by `&`.
+// may already contain a query string.
 func appendPragmas(dsn string) string {
 	pragmas := "_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
 	sep := "?"
@@ -367,27 +402,28 @@ type sqliteNodes struct{ db *sql.DB }
 
 func (s *sqliteNodes) Upsert(ctx context.Context, n Node) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO nodes(id, hostname, os, arch, ram_gb, address, hardware_json, last_heartbeat, state)
-		 VALUES(?,?,?,?,?,?,?,?,?)
+		`INSERT INTO nodes(id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   hostname=excluded.hostname,
 		   os=excluded.os,
 		   arch=excluded.arch,
 		   ram_gb=excluded.ram_gb,
 		   address=excluded.address,
+		   worker_token=CASE WHEN excluded.worker_token != '' THEN excluded.worker_token ELSE nodes.worker_token END,
 		   hardware_json=excluded.hardware_json,
 		   last_heartbeat=excluded.last_heartbeat,
 		   state=excluded.state`,
-		n.ID, n.Hostname, n.OS, n.Arch, n.RAMGB, n.Address, n.HardwareJSON, n.LastHeartbeat.Unix(), n.State)
+		n.ID, n.Hostname, n.OS, n.Arch, n.RAMGB, n.Address, n.WorkerToken, n.HardwareJSON, n.LastHeartbeat.Unix(), n.State)
 	return err
 }
 
 func (s *sqliteNodes) Get(ctx context.Context, id string) (*Node, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hostname, os, arch, ram_gb, address, hardware_json, last_heartbeat, state FROM nodes WHERE id = ?`, id)
+		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state FROM nodes WHERE id = ?`, id)
 	var n Node
 	var ts int64
-	if err := row.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.HardwareJSON, &ts, &n.State); err != nil {
+	if err := row.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.HardwareJSON, &ts, &n.State); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -399,7 +435,7 @@ func (s *sqliteNodes) Get(ctx context.Context, id string) (*Node, error) {
 
 func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, hostname, os, arch, ram_gb, address, hardware_json, last_heartbeat, state FROM nodes ORDER BY hostname`)
+		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state FROM nodes ORDER BY hostname`)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +444,7 @@ func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var ts int64
-		if err := rows.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.HardwareJSON, &ts, &n.State); err != nil {
+		if err := rows.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.HardwareJSON, &ts, &n.State); err != nil {
 			return nil, err
 		}
 		n.LastHeartbeat = time.Unix(ts, 0)
@@ -420,6 +456,84 @@ func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 func (s *sqliteNodes) Delete(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
 	return err
+}
+
+// ---- placements ----
+
+type sqlitePlacements struct{ db *sql.DB }
+
+func (s *sqlitePlacements) Upsert(ctx context.Context, p Placement) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO model_placements(node_id, model_id, status, last_seen)
+		 VALUES(?,?,?,?)
+		 ON CONFLICT(node_id, model_id) DO UPDATE SET
+		   status=excluded.status,
+		   last_seen=excluded.last_seen`,
+		p.NodeID, p.ModelID, p.Status, p.LastSeen.Unix())
+	return err
+}
+
+func (s *sqlitePlacements) GetByModel(ctx context.Context, modelID string) ([]Placement, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, model_id, status, last_seen FROM model_placements
+		 WHERE model_id = ? AND status = 'ready'`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPlacements(rows)
+}
+
+func (s *sqlitePlacements) GetByNode(ctx context.Context, nodeID string) ([]Placement, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, model_id, status, last_seen FROM model_placements
+		 WHERE node_id = ?`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPlacements(rows)
+}
+
+// ReplaceForNode atomically replaces the placement set for a node — useful
+// when a worker reports its full loaded-model list on heartbeat.
+func (s *sqlitePlacements) ReplaceForNode(ctx context.Context, nodeID string, ps []Placement) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM model_placements WHERE node_id = ?`, nodeID); err != nil {
+		return err
+	}
+	for _, p := range ps {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO model_placements(node_id, model_id, status, last_seen) VALUES(?,?,?,?)`,
+			p.NodeID, p.ModelID, p.Status, p.LastSeen.Unix()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqlitePlacements) Delete(ctx context.Context, nodeID, modelID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM model_placements WHERE node_id = ? AND model_id = ?`, nodeID, modelID)
+	return err
+}
+
+func scanPlacements(rows *sql.Rows) ([]Placement, error) {
+	var out []Placement
+	for rows.Next() {
+		var p Placement
+		var ts int64
+		if err := rows.Scan(&p.NodeID, &p.ModelID, &p.Status, &ts); err != nil {
+			return nil, err
+		}
+		p.LastSeen = time.Unix(ts, 0)
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // ---- usage ----

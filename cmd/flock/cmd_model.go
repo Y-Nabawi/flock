@@ -78,6 +78,14 @@ func modelAdd(id string) {
 		SizeBytes:   entry.SizeBytes,
 		InstalledAt: time.Now(),
 	})
+	// Mark this node's placement so the router can find it. On a worker
+	// this row will be reconciled by the leader on the next heartbeat too.
+	_ = st.Placements().Upsert(context.Background(), store.Placement{
+		NodeID:   "local",
+		ModelID:  engineName,
+		Status:   "ready",
+		LastSeen: time.Now(),
+	})
 	ok(os.Stdout, "installed: %s", entry.ID)
 }
 

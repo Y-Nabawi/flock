@@ -18,6 +18,8 @@ func NewWithAuth(name, endpoint, apiKey string) (Engine, error) {
 		return NewVLLM(endpoint, apiKey), nil
 	case "mlx", "mlx-lm":
 		return NewMLX(endpoint), nil
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		return NewLlamaCppRPC(endpoint), nil
 	default:
 		return nil, fmt.Errorf("unknown engine %q", name)
 	}

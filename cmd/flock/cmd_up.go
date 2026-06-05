@@ -62,6 +62,20 @@ func cmdUp(args []string) {
 	healthCtx, healthCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	engineOK := eng.Health(healthCtx) == nil
 	healthCancel()
+
+	// Sync any locally-loaded models into placements so the Router knows
+	// the leader's own engine has them. Best-effort.
+	if engineOK {
+		listCtx, listCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if loaded, lerr := eng.List(listCtx); lerr == nil {
+			for _, m := range loaded {
+				_ = st.Placements().Upsert(listCtx, store.Placement{
+					NodeID: "local", ModelID: m, Status: "ready", LastSeen: time.Now(),
+				})
+			}
+		}
+		listCancel()
+	}
 	if !engineOK {
 		warn(os.Stdout, "engine (%s) at %s is not reachable", eng.Name(), eng.Endpoint())
 		warn(os.Stdout, "start Ollama with `ollama serve` then check `flock status`")

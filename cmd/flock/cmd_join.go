@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -57,16 +58,23 @@ func cmdJoin(args []string) {
 		warn(os.Stdout, "could not persist node config: %v", err)
 	}
 
+	// Local engine — the worker proxies its inference requests to this.
+	eng := newEngineFromConfig(cfg)
+
 	a := &agent.Agent{
 		NodeID:            nodeID,
 		LeaderURL:         leader,
 		Token:             token,
 		Address:           addr,
 		Capabilities:      caps,
+		Engine:            eng,
 		HTTP:              &http.Client{Timeout: 10 * time.Second},
 		HeartbeatInterval: 5 * time.Second,
 		Log:               log,
 	}
+
+	// Worker HTTP server — leader will call into here for inference.
+	srv := &agent.Server{Engine: eng, Token: token}
 
 	ok(os.Stdout, "joining cluster at %s as %s", leader, nodeID)
 	note(os.Stdout, "address: %s", addr)
@@ -74,9 +82,30 @@ func cmdJoin(args []string) {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if err := a.Loop(ctx); err != nil && err != context.Canceled {
-		die("agent loop: %v", err)
-	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Heartbeat loop
+	go func() {
+		defer wg.Done()
+		if err := a.Loop(ctx); err != nil && err != context.Canceled {
+			log.Error("agent loop exited", "err", err)
+			cancel()
+		}
+	}()
+
+	// Worker HTTP server (binds to the tailnet/LAN address from mesh)
+	go func() {
+		defer wg.Done()
+		if err := srv.Start(ctx, addr); err != nil && err != context.Canceled {
+			log.Error("worker server exited", "err", err)
+			cancel()
+		}
+	}()
+
+	wg.Wait()
+	ok(os.Stdout, "worker shutdown complete")
 }
 
 func parseJoinTarget(raw string) (leader, token string, err error) {

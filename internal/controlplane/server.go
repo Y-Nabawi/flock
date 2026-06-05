@@ -17,6 +17,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
+	"github.com/hadihonarvar/flock/internal/router"
 	"github.com/hadihonarvar/flock/internal/store"
 	"github.com/hadihonarvar/flock/internal/ui"
 
@@ -40,8 +41,13 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []models.Entry, log *slog.Logger) *Server {
+	// Wrap the local engine in a Router so requests can be dispatched to
+	// worker nodes when the local engine doesn't have the requested model
+	// (or when a worker is less loaded). For single-node deployments the
+	// Router transparently delegates everything to the local engine.
+	routed := router.New(eng, st)
 	openaiH := &api.Handler{
-		Engine:  eng,
+		Engine:  routed,
 		Store:   st,
 		Catalog: cat,
 		Default: cfg.Router.DefaultModel,
@@ -254,6 +260,12 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	// The presented bearer token doubles as the shared secret for both
+	// directions of communication. Store it on the node row so the router
+	// can authenticate outbound calls to the worker.
+	// NOTE: stored plaintext for v0.3 — replace with HMAC-based mutual auth
+	// once the OIDC + key-management story lands.
+	workerToken := extractBearer(r)
 	n := store.Node{
 		ID:            req.ID,
 		Hostname:      req.Hostname,
@@ -261,6 +273,7 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		Arch:          req.Arch,
 		RAMGB:         req.RAMGB,
 		Address:       req.Address,
+		WorkerToken:   workerToken,
 		HardwareJSON:  req.HardwareJSON,
 		LastHeartbeat: time.Now(),
 		State:         "ready",
@@ -274,7 +287,8 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID           string   `json:"id"`
+		LoadedModels []string `json:"loaded_models"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body")
@@ -297,7 +311,35 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Reconcile placements with what the worker reports loaded right now.
+	placements := make([]store.Placement, 0, len(req.LoadedModels))
+	for _, m := range req.LoadedModels {
+		placements = append(placements, store.Placement{
+			NodeID:   req.ID,
+			ModelID:  m,
+			Status:   "ready",
+			LastSeen: time.Now(),
+		})
+	}
+	if err := s.store.Placements().ReplaceForNode(r.Context(), req.ID, placements); err != nil {
+		s.log.Warn("placements replace failed", "node", req.ID, "err", err)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// extractBearer pulls the token out of the Authorization header (Bearer
+// prefix optional) or the x-api-key header.
+func extractBearer(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if h != "" {
+		if len(h) > 7 && h[:7] == "Bearer " {
+			return h[7:]
+		}
+		return h
+	}
+	return r.Header.Get("X-Api-Key")
 }
 
 func (s *Server) listInstalledModels(w http.ResponseWriter, r *http.Request) {
