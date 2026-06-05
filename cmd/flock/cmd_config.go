@@ -16,6 +16,22 @@ import (
 //	flock config path       # print the config file path
 //	flock config edit       # open in $EDITOR
 func cmdConfig(args []string) {
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "config",
+			summary: "view + locate the effective runtime config",
+			usage:   "flock config <show [--json] | path | edit>",
+			examples: []string{
+				"flock config show              # effective config, secrets redacted",
+				"flock config show --json       # same, JSON output",
+				"flock config path              # print the config file path",
+				"flock config edit              # print the editor command",
+			},
+			notes: []string{
+				"Config is YAML at ~/.flock/config.yaml. Secrets (vendor keys, worker tokens) come from env vars.",
+			},
+		})
+	}
 	if len(args) == 0 {
 		args = []string{"show"}
 	}

@@ -488,7 +488,11 @@ async function renderTokens() {
       </div>
       ${table(["ID", "Name", "Scope", "User", "Daily quota", "Status", "Created", ""], rows)}
 
-      <div class="bg-white border border-slate-200 rounded p-4 mt-6">
+      <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+        <strong>Heads-up:</strong> "node" scope tokens become the shared secret a worker uses for BOTH directions of communication. They are stored plaintext on <span class="code">nodes.worker_token</span> and used by the leader to call back into the worker. Only issue them on a trusted network (LAN or Tailscale). See the <a class="underline" href="#" onclick="switchView('settings')">Settings tab</a> for the full security model.
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded p-4 mt-4">
         <div class="text-sm font-semibold mb-2">Create a new key</div>
         <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
           <div>
@@ -634,6 +638,19 @@ async function renderSettings() {
         <div class="mt-2">Vendor fallback keys come from env vars:</div>
         <pre class="text-xs bg-amber-100 mt-1 p-2 rounded">ANTHROPIC_API_KEY=…   # enables claude-* via /v1/messages
 OPENAI_API_KEY=…      # enables gpt-* via /v1/chat/completions</pre>
+      </div>
+
+      <div class="mt-4 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-900">
+        <div class="font-semibold mb-1">🔒 Security model — LAN trust</div>
+        <div class="space-y-2">
+          <div>Flock v0.4 assumes a <strong>trusted network</strong> (LAN or Tailscale). Specifically:</div>
+          <ul class="list-disc list-inside space-y-1">
+            <li><strong>User API keys</strong> (admin / user scope) are <em>hashed</em> (sha256) in the database — only the plaintext you see at creation time can be used.</li>
+            <li><strong>Worker tokens</strong> (the shared secret leader ↔ worker) are currently stored <strong>plaintext</strong> in <span class="code">nodes.worker_token</span>. Anyone with read access to the SQLite file on the leader can impersonate a worker.</li>
+            <li><strong>Worker HTTP servers</strong> bind only to the mesh address (LAN / tailnet IP), never 0.0.0.0. Network reachability is the first line of defense.</li>
+          </ul>
+          <div>For hostile networks (public WiFi, untrusted VPC), run the cluster <strong>behind Tailscale</strong> or a similar zero-trust overlay until v0.5 lands HMAC-based mutual auth.</div>
+        </div>
       </div>
 
       <div class="mt-4 bg-white border border-slate-200 rounded p-4 text-sm">

@@ -8,7 +8,17 @@ import (
 	"time"
 )
 
-func cmdStatus(_ []string) {
+func cmdStatus(args []string) {
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "status",
+			summary: "show local node + cluster status",
+			usage:   "flock status",
+			examples: []string{
+				"flock status",
+			},
+		})
+	}
 	cfg := loadConfigOrExit()
 	addr := cfg.Listen
 	if addr == "" {

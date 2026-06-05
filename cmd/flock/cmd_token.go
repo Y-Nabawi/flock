@@ -10,8 +10,26 @@ import (
 )
 
 func cmdToken(args []string) {
+	help := helpSpec{
+		name:    "token",
+		summary: "manage API keys and node-join tokens",
+		usage:   "flock token <create [name] [--admin|--node] | ls | revoke <id>>",
+		examples: []string{
+			"flock token create alice                  # user-scope key for dev `alice`",
+			"flock token create alice-admin --admin    # admin-scope key (can call /admin/v1/*)",
+			"flock token create --node                 # one-time join token for a new worker",
+			"flock token ls",
+			"flock token revoke k_abc123",
+		},
+		notes: []string{
+			"⚠️  --node tokens are the shared secret leader ↔ worker — only issue on a trusted network (LAN or Tailscale).",
+		},
+	}
 	if len(args) == 0 {
-		die("usage: flock token <create|ls|revoke> [args]")
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "create":

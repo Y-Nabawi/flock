@@ -15,6 +15,22 @@ func cmdUsage(args []string) {
 	fs := flag.NewFlagSet("usage", flag.ExitOnError)
 	limit := fs.Int("limit", 50, "maximum number of rows to show")
 	user := fs.String("user", "", "filter to a specific user_id (client-side)")
+	fs.Usage = func() {
+		showHelp(helpSpec{
+			name:    "usage",
+			summary: "show recent inference usage records",
+			usage:   "flock usage [--limit N] [--user X]",
+			flags:   fs,
+			examples: []string{
+				"flock usage                 # latest 50 records",
+				"flock usage --limit 200     # latest 200",
+				"flock usage --user alice    # filter by user",
+			},
+		})
+	}
+	if wantsHelp(args) {
+		fs.Usage()
+	}
 	_ = fs.Parse(args)
 
 	cfg := loadConfigOrExit()

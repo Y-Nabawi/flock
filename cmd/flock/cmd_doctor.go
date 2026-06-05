@@ -13,7 +13,17 @@ import (
 	"github.com/hadihonarvar/flock/internal/models"
 )
 
-func cmdDoctor(_ []string) {
+func cmdDoctor(args []string) {
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "doctor",
+			summary: "diagnose common setup problems (engine, port, catalog, hardware)",
+			usage:   "flock doctor",
+			examples: []string{
+				"flock doctor              # run all checks, print fix commands for failures",
+			},
+		})
+	}
 	cfg := loadConfigOrExit()
 	fmt.Println("Flock doctor")
 	fmt.Println("============")

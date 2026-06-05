@@ -90,6 +90,8 @@ Commands:
   version                  Print version
   help                     Show this help
 
-Run 'flock <command> --help' for command-specific options.
+Every command supports --help:
+  flock up --help, flock shard --help, flock token --help, etc.
+
 Docs: https://github.com/hadihonarvar/flock`)
 }

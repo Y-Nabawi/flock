@@ -12,8 +12,25 @@ import (
 )
 
 func cmdModel(args []string) {
+	help := helpSpec{
+		name:    "model",
+		summary: "install, list, search, or uninstall LLM models",
+		usage:   "flock model <add <id> | ls | search [query] | remove <id>>",
+		examples: []string{
+			"flock model search coder         # browse the catalog",
+			"flock model add llama-3.2-3b     # install (auto-delegates if sharded)",
+			"flock model ls                   # list installed models",
+			"flock model remove llama-3.2-3b",
+		},
+		notes: []string{
+			"For sharded models (split across multiple machines) see `flock shard --help`.",
+		},
+	}
 	if len(args) == 0 {
-		die("usage: flock model <add|ls|remove> [args]")
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "add":
@@ -35,7 +52,7 @@ func cmdModel(args []string) {
 		}
 		modelSearch(query)
 	default:
-		die("unknown subcommand: model %s", args[0])
+		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
 }
 

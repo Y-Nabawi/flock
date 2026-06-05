@@ -10,13 +10,26 @@ import (
 )
 
 // cmdShard dispatches `flock shard <subcommand>`.
-//
-//	flock shard ls                        # list all shards across all models
-//	flock shard create <model> [N]        # create sharded model with N shards
-//	flock shard remove <model>            # tear down a sharded model
 func cmdShard(args []string) {
+	help := helpSpec{
+		name:    "shard",
+		summary: "orchestrate sharded models (one model split across N machines)",
+		usage:   "flock shard <ls | create <model> [N] | remove <model>>",
+		examples: []string{
+			"flock shard create llama-3.3-70b-sharded 2   # split across 2 workers",
+			"flock shard ls",
+			"flock shard remove llama-3.3-70b-sharded     # stop coordinator + every rpc-server",
+		},
+		notes: []string{
+			"Sharding uses llama.cpp's RPC backend. Workers need `rpc-server` on PATH; the leader needs `llama-server`.",
+			"The catalog entry must have `sharding.required: true` and a local GGUF path in `source.path`.",
+		},
+	}
 	if len(args) == 0 {
-		die("usage: flock shard <ls|create|remove> [args]")
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "ls", "list":

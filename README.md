@@ -10,23 +10,43 @@
 
 ## 🚀 Try it in 60 seconds
 
-You need: a Mac (Apple Silicon) or Linux machine.
+Pick your platform — 4 commands each.
+
+### 🍎 macOS (Apple Silicon — M1/M2/M3/M4)
 
 ```bash
-# 1. install Ollama (the actual model engine)
-brew install --cask ollama                                # macOS
-# or:  curl -fsSL https://ollama.com/install.sh | sh      # Linux
+# 1. install Ollama (use the cask — plain `brew install ollama` is broken)
+brew install --cask ollama
+open -a Ollama
 
-# 2. start Ollama
-open -a Ollama                                            # macOS (background)
-# or:  ollama serve &                                     # Linux
-
-# 3. install Flock
+# 2. install Flock
 curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
 
-# 4. start Flock with a tiny model (1 GB, fast download)
+# 3. add install dir to PATH if the installer says so
+export PATH="$HOME/.local/bin:$PATH"
+
+# 4. start Flock with a tiny model (~1 GB, fast download)
 FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
 ```
+
+### 🐧 Linux (x86_64 or arm64)
+
+```bash
+# 1. install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+
+# 2. install Flock
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
+
+# 3. add install dir to PATH if needed
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+# 4. start Flock with a tiny model (~1 GB, fast download)
+FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
+```
+
+### What you should see (both platforms)
 
 Flock prints something like:
 
@@ -37,6 +57,8 @@ Flock prints something like:
   API:    http://localhost:8080/v1
   Admin API key:   sk-orc-xK9p…
 ```
+
+**Every command supports `--help`** — `flock <cmd> --help` prints usage, flags, and examples.
 
 **Copy that admin key.** In another terminal:
 

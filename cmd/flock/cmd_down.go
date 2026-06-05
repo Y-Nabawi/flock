@@ -6,7 +6,17 @@ import (
 	"time"
 )
 
-func cmdDown(_ []string) {
+func cmdDown(args []string) {
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "down",
+			summary: "stop the local flock node (SIGTERM via PID file)",
+			usage:   "flock down",
+			examples: []string{
+				"flock down",
+			},
+		})
+	}
 	cfg := loadConfigOrExit()
 	pid, err := readPID(cfg)
 	if err != nil {

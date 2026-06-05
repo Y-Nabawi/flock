@@ -23,6 +23,26 @@ func cmdUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.flock/config.yaml)")
 	autoPull := fs.Bool("auto-pull", true, "auto-pull the default model on first run")
+	fs.Usage = func() {
+		showHelp(helpSpec{
+			name:    "up",
+			summary: "start the local node (becomes the cluster leader on first run)",
+			usage:   "flock up [--config <path>] [--auto-pull=false]",
+			flags:   fs,
+			examples: []string{
+				"flock up",
+				"FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up",
+				"flock up --config ~/.flock/staging.yaml",
+				"flock up --auto-pull=false              # don't pre-pull the default model",
+			},
+			notes: []string{
+				"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
+			},
+		})
+	}
+	if wantsHelp(args) {
+		fs.Usage()
+	}
 	_ = fs.Parse(args)
 
 	// 1. Config + logger

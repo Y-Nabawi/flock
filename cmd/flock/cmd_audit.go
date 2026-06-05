@@ -14,6 +14,22 @@ func cmdAudit(args []string) {
 	fs := flag.NewFlagSet("audit", flag.ExitOnError)
 	limit := fs.Int("limit", 50, "maximum rows to show")
 	actor := fs.String("actor", "", "filter by actor name (client-side)")
+	fs.Usage = func() {
+		showHelp(helpSpec{
+			name:    "audit",
+			summary: "show recent admin audit log entries",
+			usage:   "flock audit [--limit N] [--actor X]",
+			flags:   fs,
+			examples: []string{
+				"flock audit                       # latest 50 entries",
+				"flock audit --limit 500",
+				"flock audit --actor admin",
+			},
+		})
+	}
+	if wantsHelp(args) {
+		fs.Usage()
+	}
 	_ = fs.Parse(args)
 
 	cfg := loadConfigOrExit()

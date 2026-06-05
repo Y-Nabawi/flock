@@ -27,8 +27,23 @@ import (
 //
 //	flock join http://leader:8080?token=sk-orc-...
 func cmdJoin(args []string) {
+	if wantsHelp(args) {
+		showHelp(helpSpec{
+			name:    "join",
+			summary: "join this machine to an existing flock cluster as a worker",
+			usage:   "flock join <leader-url>?token=<token>",
+			examples: []string{
+				"flock join http://leader.local:8080?token=sk-orc-...",
+				"flock join https://flock.example.com?token=sk-orc-...",
+			},
+			notes: []string{
+				"Generate the token on the leader: `flock token create --node`",
+				"⚠️  Tokens grant access. Only join on a trusted network (LAN or Tailscale).",
+			},
+		})
+	}
 	if len(args) == 0 {
-		die("usage: flock join <leader-url>?token=<token>")
+		die("usage: flock join <leader-url>?token=<token>  (run `flock join --help` for details)")
 	}
 	leader, token, err := parseJoinTarget(args[0])
 	if err != nil {

@@ -11,8 +11,25 @@ import (
 // cmdNode dispatches `flock node <subcommand>`. All operations call the
 // admin API on the leader (local by default).
 func cmdNode(args []string) {
+	help := helpSpec{
+		name:    "node",
+		summary: "manage worker nodes in the cluster",
+		usage:   "flock node <ls | show <id> | drain <id> | remove <id>>",
+		examples: []string{
+			"flock node ls",
+			"flock node show n_abc123",
+			"flock node drain n_abc123      # stop routing new requests to it",
+			"flock node remove n_abc123     # forget it (worker keeps running)",
+		},
+		notes: []string{
+			"Add a new node: `flock token create --node` then on the worker run `flock join <url>?token=…`.",
+		},
+	}
 	if len(args) == 0 {
-		die("usage: flock node <ls|show|drain|remove> [id]")
+		dieHelp(help)
+	}
+	if wantsHelp(args) {
+		showHelp(help)
 	}
 	switch args[0] {
 	case "ls", "list":
@@ -33,7 +50,7 @@ func cmdNode(args []string) {
 		}
 		nodeRemove(args[1])
 	default:
-		die("unknown subcommand: node %s", args[0])
+		die("unknown subcommand: node %s (run `flock node --help` for usage)", args[0])
 	}
 }
 

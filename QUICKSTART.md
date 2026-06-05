@@ -149,4 +149,30 @@ More fixes in the [main README's troubleshooting table](README.md#troubleshootin
 
 ---
 
+---
+
+## 🔒 Security model (read before exposing it)
+
+Flock v0.4 assumes a **trusted network** (LAN or [Tailscale](https://tailscale.com/)). Specifically:
+
+- **User API keys** (admin / user scope) are **sha256-hashed** in the database. The plaintext shown at creation time is the only way to use the key.
+- **Worker tokens** (the shared secret between leader and worker) are **stored plaintext** in `nodes.worker_token`. Anyone with read access to the leader's SQLite file can impersonate a worker. v0.5 plans HMAC-based mutual auth.
+- **Worker HTTP servers** bind only to the mesh address (LAN / tailnet IP), never to `0.0.0.0`. Network reachability is the first line of defense.
+- The **embedded web UI** authenticates by pasted admin key (stored in browser `localStorage`).
+
+If you're not on a trusted LAN, run the cluster **behind Tailscale** or a similar zero-trust overlay until the HMAC story lands.
+
+---
+
+## 📖 Every command has --help
+
+```bash
+flock --help                  # top-level
+flock up --help               # any subcommand
+flock shard create --help     # any sub-subcommand
+flock model --help            # see the available actions
+```
+
+---
+
 **Stuck?** Open an issue: <https://github.com/hadihonarvar/flock/issues>

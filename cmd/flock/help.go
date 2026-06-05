@@ -1,0 +1,84 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+)
+
+// printCmdHelp prints a consistent help block for any subcommand. Each command
+// builds one of these and calls printCmdHelp(fs, ...) from its --help branch.
+//
+// Layout:
+//
+//	flock <name> — <summary>
+//
+//	Usage:
+//	  <usage>
+//
+//	Flags:
+//	  <auto-printed by fs.PrintDefaults if fs is non-nil>
+//
+//	Examples:
+//	  <each example on its own line>
+type helpSpec struct {
+	name     string
+	summary  string
+	usage    string
+	flags    *flag.FlagSet
+	examples []string
+	notes    []string
+}
+
+func (h helpSpec) print(w io.Writer) {
+	fmt.Fprintf(w, "flock %s — %s\n\n", h.name, h.summary)
+	if h.usage != "" {
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintf(w, "  %s\n\n", h.usage)
+	}
+	if h.flags != nil {
+		// Only print if the FlagSet has at least one defined flag.
+		hasFlags := false
+		h.flags.VisitAll(func(*flag.Flag) { hasFlags = true })
+		if hasFlags {
+			fmt.Fprintln(w, "Flags:")
+			h.flags.SetOutput(w)
+			h.flags.PrintDefaults()
+			fmt.Fprintln(w)
+		}
+	}
+	if len(h.examples) > 0 {
+		fmt.Fprintln(w, "Examples:")
+		for _, e := range h.examples {
+			fmt.Fprintf(w, "  %s\n", e)
+		}
+		fmt.Fprintln(w)
+	}
+	for _, n := range h.notes {
+		fmt.Fprintln(w, n)
+	}
+}
+
+// wantsHelp returns true if args contain -h or --help.
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" || a == "help" {
+			return true
+		}
+	}
+	return false
+}
+
+// dieHelp prints help to stderr and exits with code 2 (standard for "you used
+// this wrong, here's how to use it right").
+func dieHelp(h helpSpec) {
+	h.print(os.Stderr)
+	os.Exit(2)
+}
+
+// showHelp prints help to stdout and exits 0.
+func showHelp(h helpSpec) {
+	h.print(os.Stdout)
+	os.Exit(0)
+}
