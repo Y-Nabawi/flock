@@ -343,6 +343,18 @@ This is a load-bearing architectural rule, not a style preference:
 
 See **M4-T20** in TASKS.md for the refactor that codifies this. After M4-T20 lands, `internal/api/admin_*.go` contains no mutating logic — only request decoding and a call into `internal/control/`.
 
+### Implemented examples (the pattern in production)
+
+As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strictly — use them as references when writing new ones:
+
+| CLI command | `internal/control/` function | Admin endpoint (in `internal/controlplane/`) |
+|---|---|---|
+| `flock connect <client>` | `control.ConnectSnippet()` + `control.Clients()` | `POST /admin/v1/connect/snippet`, `GET /admin/v1/connect/clients` (in `admin_connect.go`) |
+| `flock invite <name>` | `control.Invite()` | `POST /admin/v1/invite` (in `admin_invite.go`) |
+| (dashboard-only) | — | `POST /admin/v1/healthcheck` (in `admin_healthcheck.go`) — calls `s.openaiH.ResolveModel()` + `s.router.Chat()` to send a tiny ping through the same path real requests take |
+
+`internal/control/snippets/*.tmpl` are `go:embed`-ed templates — adding a new supported client is a one-file change. Existing CLI/admin pairs (model add, token create, node drain, etc.) still duplicate logic and will move into `internal/control/` as part of the rest of M4-T20.
+
 ---
 
 ## Agent internals

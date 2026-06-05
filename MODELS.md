@@ -2,6 +2,15 @@
 
 Every model in Flock's catalog, with step-by-step install + use instructions for every common client (curl, Cursor / VS Code, Claude Code, OpenAI SDK, Anthropic SDK). Pick the row that matches your hardware, run the install, copy the snippet for your tool.
 
+> **Tip:** the snippets below are written by hand for reference, but Flock can also generate them automatically with your URL + token already filled in:
+>
+> ```bash
+> flock connect claude-code        # or: cursor, aider, continue, zed, cline, qwen-code, openai-sdk, anthropic-sdk, curl
+> flock connect --list             # all 10 supported tools
+> ```
+>
+> Or click **Connect** in the dashboard (`http://localhost:8080`).
+
 > For the catalog summary table see [QUICKSTART](QUICKSTART.md#-use-a-different-model-qwen-llama-deepseek). For "why those specific models?" see [README → Supported models](README.md#supported-models).
 
 ---

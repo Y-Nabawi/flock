@@ -100,22 +100,49 @@ After step 3, Flock prints:
 
   Flock is ready.
 
-  API:    http://localhost:8080/v1
-  Health: http://localhost:8080/healthz
+  Dashboard:  http://localhost:8080
+  API:        http://localhost:8080/v1
+  Health:     http://localhost:8080/healthz
 
   Admin API key (shown once — store it now):
     sk-orc-xK9pQANw-nmzUbVdvL3S-aJKKvPeNa-eedqt
 
+  Next steps:
+    →  Test in the browser:  http://localhost:8080
+    →  Wire up Claude Code:  flock connect claude-code
+    →  Wire up Cursor:       flock connect cursor
+    →  See all clients:      flock connect --list
+    →  Invite a teammate:    flock invite <name>
+
   Press Ctrl-C to stop.
 ```
 
-**Copy that admin key now.** You won't see it again.
+**Copy that admin key now.** You won't see it again. (It's also saved to `~/.flock/admin.key` for subsequent CLI commands like `flock connect` and `flock invite`.)
 
 ---
 
 ## 💬 Test it (pick one)
 
-### A) curl from your terminal
+### A) Fastest — `flock connect <tool>`
+
+Prints copy-paste config for any of 10 supported tools, with your URL + token already substituted:
+
+```bash
+flock connect claude-code     # Anthropic-API tools
+flock connect cursor          # IDE settings
+flock connect aider           # CLI flags
+flock connect --list          # see all 10
+```
+
+### B) Web dashboard
+
+1. Open <http://localhost:8080> in a browser
+2. Paste the admin key (auto-saved as `~/.flock/admin.key` so subsequent CLI calls don't need it)
+3. Click **Connect** in the nav — pick a tool, click Copy, you're done
+4. Or click **Playground** for an in-browser chat to sanity-check the model
+5. Other tabs: Dashboard, Nodes, Models, Shards, Tokens, Usage, Audit, Settings
+
+### C) curl from your terminal
 
 ```bash
 KEY="sk-orc-xK9p…"   # paste your key
@@ -132,13 +159,7 @@ You'll see JSON like:
 {"choices":[{"message":{"role":"assistant","content":"Hello! How can I help?"}}]}
 ```
 
-### B) Web dashboard
-
-1. Open <http://localhost:8080> in a browser
-2. Paste the admin key
-3. Explore: Dashboard, Nodes, Models, Tokens, Usage, Settings
-
-### C) Claude Code (use your local model instead of paying Anthropic)
+### D) Manual — Claude Code (if you can't run `flock connect`)
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
@@ -151,9 +172,19 @@ Claude Code now talks to your local Llama 1B instead of `api.anthropic.com`.
 
 > **Why `ANTHROPIC_MODEL`?** Without it Claude Code defaults to a `claude-*` model name. With no `ANTHROPIC_API_KEY` set, Flock won't proxy to real Anthropic, so the request would 404 against your local engine. Setting `ANTHROPIC_MODEL` to a local catalog id makes Claude Code request your local model.
 
-### D) Cursor / Aider / OpenAI SDK
+---
 
-Point them at `http://localhost:8080/v1` with the admin key as the API key.
+## 👥 Share with your team
+
+Once you've confirmed it works:
+
+```bash
+flock invite hadi --quota 100000
+```
+
+This creates a user-scope token for `hadi` (capped at 100k tokens/day) and prints a paste-into-Slack markdown card with config snippets for all 10 supported clients. Your teammate copies the snippet for the tool they use → they're talking to your hardware.
+
+The same flow works in the dashboard: **Tokens → + Invite teammate**.
 
 ---
 
