@@ -702,7 +702,7 @@ Export via OTLP. Defaults disabled; enable with `observability.otlp_endpoint`.
 
 ### Reporting vulnerabilities
 
-`security@flock.dev` (PGP key in `SECURITY.md`). 90-day disclosure.
+`hadi.work.ca@gmail.com` (PGP key in `SECURITY.md`). 90-day disclosure.
 
 ---
 

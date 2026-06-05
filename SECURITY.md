@@ -14,7 +14,7 @@ Flock is pre-1.0. Security fixes ship on `main` and in the most recent minor rel
 
 **Do not file a public issue for security bugs.**
 
-Email: `security@flock.dev` *(placeholder until a real address is set up — until then, please open a private GitHub Security Advisory at https://github.com/hadihonarvar/flock/security/advisories/new)*
+Email `hadi.work.ca@gmail.com` *or* (preferred) open a private GitHub Security Advisory at https://github.com/hadihonarvar/flock/security/advisories/new
 
 Include:
 - A description of the issue and its impact
