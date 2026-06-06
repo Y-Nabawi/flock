@@ -4,7 +4,10 @@
 #
 # At Q4 weights are ~500 GB — must be sharded across multiple nodes.
 # Prereqs (same as other sharded entries):
-#   1. Download GGUF (see https://huggingface.co/moonshotai/Kimi-K2.6-GGUF).
+#   1. Download GGUF, e.g.:
+#        - https://huggingface.co/unsloth/Kimi-K2.6-GGUF        (Q8 / Q4 dynamic quants)
+#        - https://huggingface.co/bartowski/moonshotai_Kimi-K2.6-GGUF
+#        - https://huggingface.co/ubergarm/Kimi-K2.6-GGUF       (MoE-optimized quants)
 #   2. brew install llama.cpp on every node.
 #   3. At least 4 workers joined.
 # Then: `flock model add kimi-k2.6-sharded`

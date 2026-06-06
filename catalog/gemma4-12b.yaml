@@ -3,9 +3,9 @@ display_name: Google Gemma 4 12B
 source:
   type: ollama
   ollama_name: gemma4:12b
-size_bytes: 8000000000
+size_bytes: 7600000000
 quant: q4_k_m
-context_window: 131072
+context_window: 262144
 capabilities: [chat, tools]
 recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:

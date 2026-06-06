@@ -1,13 +1,13 @@
 id: gemma4-26b
-display_name: Google Gemma 4 26B
+display_name: Google Gemma 4 26B (MoE, 4B active, multimodal)
 source:
   type: ollama
   ollama_name: gemma4:26b
-size_bytes: 14000000000
+size_bytes: 18000000000
 quant: q4_k_m
-context_window: 131072
-capabilities: [chat, tools]
+context_window: 262144
+capabilities: [chat, tools, vision]
 recommended_engines: [ollama, vllm, mlx, llamacpp]
 hardware:
-  min_ram_gb: 20
-tags: [general, multilingual, google, fast]
+  min_ram_gb: 24
+tags: [general, multilingual, google, fast, moe, multimodal]

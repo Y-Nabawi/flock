@@ -6,7 +6,7 @@ display_name: Meta Llama 4 Scout (109B MoE, 10M ctx, multimodal)
 source:
   type: ollama
   ollama_name: llama4:scout
-size_bytes: 65000000000
+size_bytes: 67000000000
 quant: q4_k_m
 context_window: 10485760
 capabilities: [chat, tools, vision]

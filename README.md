@@ -366,43 +366,23 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Flock ships a small curated catalog of models that have been smoke-tested against the shipping engines. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
+Flock ships a curated catalog of **22 open-weight models** in `catalog/*.yaml`, spanning everything from 1B edge models to 1T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag).
 
-### Shipped catalog (smoke-tested, in `catalog/*.yaml`)
+> 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 
-#### Coding agents (Qwen 2.5 Coder family)
+### Shipped catalog at a glance
 
-| Catalog ID | Backing model | Quant | Min RAM | Engines | Notes |
-|---|---|---|---|---|---|
-| `qwen-coder-7b` | Qwen2.5-Coder-7B-Instruct | Q4_K_M | 6 GB | ollama, llamacpp, mlx | Local Cursor; runs on an M2 8 GB |
-| `qwen-coder-14b` | Qwen2.5-Coder-14B-Instruct | Q4_K_M | 12 GB | ollama, llamacpp, mlx | Best balance for most Macs |
-| `qwen-coder-32b` | Qwen2.5-Coder-32B-Instruct | Q4_K_M | 24 GB | ollama, llamacpp, vllm | Closest open match to Claude/GPT on code |
+| Tier | Models |
+|---|---|
+| **Edge (≤2 GB RAM)** | `llama-3.2-1b`, `llama-3.2-3b` |
+| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `qwen3-8b`, `mistral-nemo-12b`, `gemma4-12b`, `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
+| **Consumer big (16-32 GB)** | `gpt-oss-20b` ⭐, `qwen3.6-27b` ⭐, `gemma4-26b`, `qwen3-30b`, `qwen3-coder-30b`, `qwen-coder-32b` |
+| **Single 80 GB GPU** | `llama-3.3-70b-sharded`, `gpt-oss-120b`, `llama-4-scout` (10M ctx, multimodal) |
+| **Sharded frontier (≥160 GB combined)** | `deepseek-v4-flash-sharded`, `glm-5.1-sharded`, `kimi-k2.6-sharded` |
 
-#### General reasoning (Qwen 3)
+⭐ = current top consumer pick (June 2026).
 
-| Catalog ID | Backing model | Quant | Min RAM | Engines |
-|---|---|---|---|---|
-| `qwen3-8b` | Qwen3-8B-Instruct | Q4_K_M | 8 GB | ollama, llamacpp |
-| `qwen3-14b` | Qwen3-14B-Instruct | Q4_K_M | 12 GB | ollama, llamacpp |
-
-#### Reasoning / thinking (DeepSeek)
-
-| Catalog ID | Backing model | Quant | Min RAM | Engines |
-|---|---|---|---|---|
-| `deepseek-r1-8b` | DeepSeek-R1-Distill-Llama-8B | Q4_K_M | 12 GB | ollama, vllm, llamacpp |
-
-#### Small / smoke-test (Llama 3.2)
-
-| Catalog ID | Backing model | Quant | Min RAM | Engines |
-|---|---|---|---|---|
-| `llama-3.2-1b` | Llama-3.2-1B-Instruct | Q4_K_M | 2 GB | ollama, llamacpp |
-| `llama-3.2-3b` | Llama-3.2-3B-Instruct | Q4_K_M | 4 GB | ollama, llamacpp |
-
-#### Sharded (multi-machine, via llama.cpp-RPC)
-
-| Catalog ID | Backing model | Quant | Combined RAM | Notes |
-|---|---|---|---|---|
-| `llama-3.3-70b-sharded` | Llama-3.3-70B-Instruct | Q4_K_M | 48 GB across ≥2 workers | Manual GGUF download + `flock shard create` |
+Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec.
 
 ### Proxied (paid APIs — shipped, works today)
 
@@ -417,8 +397,8 @@ Routing logic lives in `internal/api/egress.go`; vendor detection in `internal/r
 
 These work today via `flock model add hf:owner/repo` but don't have curated YAML entries with hardware specs:
 
-- **Larger general / agent models** — Qwen3-72B, Llama-3.3-70B (non-sharded), DeepSeek-V3, GLM-4.6, Qwen3-Coder-30B/480B → planned for **M4-T06** (catalog expansion to top 30 models).
-- **Vision (image input)** — Qwen2.5-VL, Llama-3.2-Vision, Pixtral, Gemma-3 → engine support and API path land in **M4-T03**.
+- **Larger general / agent models** — Qwen3-235B, MiniMax-M2.7, MiMo-V2 — pending sharded YAML entries.
+- **Vision (image input)** — `llama-4-scout`, `gemma4-26b`, and `qwen3-vl:*` are in the catalog but the API path (`POST /v1/chat/completions` with image_url) still needs engine wiring → tracked as **M4-T03**.
 - **Embeddings + rerank (for RAG)** — `/v1/embeddings` endpoint not shipped; tracked as **M4-T05**.
 - **Speech / transcription** — `/v1/audio/transcriptions` not shipped; tracked as **M4-T04**.
 
