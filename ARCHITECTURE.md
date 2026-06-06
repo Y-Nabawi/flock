@@ -989,8 +989,7 @@ Every PR runs all three in CI.
 
 - **GitHub Discussions** — design questions, RFCs
 - **GitHub Issues** — bugs, feature requests
-- **Discord** — `discord.gg/flock` for chat
-- **Maintainer office hours** — every other Friday
+- **Maintainer** — [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) (`hadi.work.ca@gmail.com`)
 
 ---
 

@@ -685,7 +685,7 @@ Goal: launch publicly. Quality bar high enough to keep stars and adopt PRs.
 
 - Owner: Docs · Effort: L · Depends on: —
 - Files: `docs-site/` (Nextra or Docusaurus)
-- Acceptance: Renders README + ARCHITECTURE + per-page guides; hosted at `flock.dev/docs` via Cloudflare Pages.
+- Acceptance: Renders README + ARCHITECTURE + per-page guides; hosted at `flockllm.com/docs` (or via Cloudflare Pages on a subdomain).
 
 ### M4-T10 — Marketing site
 

@@ -37,7 +37,7 @@ In scope:
 
 - The `flock` binary and all code in this repository
 - Official Docker images we publish
-- Pre-built install scripts hosted at `get.flock.dev`
+- Pre-built install scripts hosted at `raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh`
 
 Out of scope:
 

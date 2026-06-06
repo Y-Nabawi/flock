@@ -1,7 +1,9 @@
 # Flock
 
 > **Self-hosted AI for your team. One endpoint. Your hardware.**
->
+
+[**flockllm.com**](https://flockllm.com) · [GitHub](https://github.com/hadihonarvar/flock) · Maintained by [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) · Apache-2.0
+
 > Flock is the **self-hosted control plane for LLMs**. One Go binary turns your Macs and Linux boxes into a private inference cluster — multi-machine routing, per-user keys, daily quotas, full audit log, and a built-in admin dashboard, behind one endpoint that speaks both the **OpenAI** and **Anthropic** APIs.
 >
 > Engine-agnostic: bring **Ollama**, **vLLM**, **MLX-LM**, or **llama.cpp-RPC**. Run open-weight models (Qwen, Llama, DeepSeek, …) on your own hardware, shard a giant model across several machines via llama.cpp-RPC, and transparently fall back to paid Claude / GPT only when you choose.
@@ -200,7 +202,7 @@ There are excellent open-weight models now — Qwen3-Coder, Llama 3.3, DeepSeek-
 ### On the first machine (becomes the leader)
 
 ```bash
-curl -fsSL https://get.flock.dev | sh
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
 flock up
 ```
 
@@ -220,13 +222,13 @@ You'll see:
   Key:    sk-orc-xK9p…  (also in UI)
 
   Add another machine:
-    curl -fsSL https://get.flock.dev | sh -s -- join flock-7f3a.ts.net?token=…
+    curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh -s -- join flock-7f3a.ts.net?token=…
 ```
 
 ### On any additional machine
 
 ```bash
-curl -fsSL https://get.flock.dev | sh -s -- join flock-7f3a.ts.net?token=…
+curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh -s -- join flock-7f3a.ts.net?token=…
 ```
 
 The agent auto-joins the mesh, registers its capabilities, and the leader assigns it a model. You don't pick anything; you don't open any firewall ports.
@@ -663,7 +665,7 @@ Idempotent. Re-running it shows status if already running.
 ### Add a node
 
 1. From the leader: click **Add Node** in the UI, or run `flock token create --node`
-2. On the new machine: `curl -fsSL https://get.flock.dev | sh -s -- join <leader-url>?token=<token>`
+2. On the new machine: `curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh -s -- join <leader-url>?token=<token>`
 
 The token is a single-use, time-limited JWT that includes the tailnet auth key. The new node joins the mesh, registers with the leader, and waits for a model assignment.
 
@@ -1184,7 +1186,7 @@ Flock stands on the shoulders of:
 
 **Project links**
 
-- Website: https://flock.dev
+- Website: https://flockllm.com
 - GitHub: https://github.com/hadihonarvar/flock
-- Discord: https://discord.gg/flock
-- Twitter/X: [@flock_hq](https://twitter.com/flock_hq)
+- Maintainer: [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — `hadi.work.ca@gmail.com`
+- Security disclosures: see [SECURITY.md](SECURITY.md)

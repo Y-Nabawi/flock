@@ -73,41 +73,13 @@ For the full per-model walkthrough (the 9 original entries below have detailed i
 
 ## How to choose
 
-```
-                ┌──────────────────────────────────┐
-                │  How much RAM does your box      │
-                │  have AFTER OS + Chrome?         │
-                └──────────────┬───────────────────┘
-                               │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-       <6 GB                 6-20 GB              20-48 GB              >48 GB
-        │                      │                      │                    │
-        ▼                      ▼                      ▼                    ▼
-   llama-3.2-1b         What's the workload?    What's the workload?    Same as 20-48,
-   (smoke test)              │                       │                  or shard a 70B:
-                             │                       │                  llama-3.3-70b
-              ┌──────────────┴──────────────┐        │                  -sharded
-              │              │              │        │
-            coding         chat/agent     reasoning  │
-              │              │              │        │
-              ▼              ▼              ▼        ▼
-        qwen-coder-7b   qwen3-8b      deepseek-r1-8b  qwen-coder-32b
-        (8 GB)          (12 GB)       (12 GB)          (32 GB) — laptop max
-                        qwen-coder-14b
-                        (16 GB)
-                        qwen3-14b
-                        (16 GB)
-```
+Use the [picker table above](#-picker-table--what-to-install). It covers every model in the catalog with size, RAM, capability ratings, and license — pick the row that matches your hardware, then go by use case.
 
-**Quick rules of thumb:**
-- If unsure, start with `qwen-coder-14b` — best general-purpose coder/agent model that fits a 16 GB machine.
-- For Claude-Code-style workflows specifically, prefer Qwen Coder over Qwen3 chat — it's tuned for tool use.
-- Don't pick a 70B model on a 24 GB machine. Even if it loads, every token will swap to disk.
+The per-model walkthroughs below (with full install + client snippets) cover the **9 original v0.1.0 entries**. For the **17 newer entries** added in v0.2 / v0.2.1, run `flock model info <id>` for the same metadata, or open a [catalog issue](https://github.com/hadihonarvar/flock/issues/new?template=catalog_request.yml) if you want a full walkthrough added.
 
 ---
 
-## Table of contents
+## Table of contents (original v0.1.0 walkthroughs)
 
 - [`llama-3.2-1b`](#llama-3-2-1b--smallest-smoke-test) — smallest, smoke test
 - [`llama-3.2-3b`](#llama-3-2-3b--small-fast-chat) — small fast chat
