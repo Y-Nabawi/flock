@@ -13,10 +13,6 @@
 ## 🗺️ Where Flock sits
 
 ```
-===================================================================================
-                              WHERE FLOCK SITS
-===================================================================================
-
            ┌──────────────────────────────────────────────────────────────┐
            │                       YOUR USE CASES                         │
            │             (the tools your team already uses)               │
@@ -72,8 +68,6 @@
       │   + any HuggingFace or Ollama model.          you pay vendors only  │
       │                                               when YOU chose to.    │
       └──────────────────────────────────────────────────────────────────────┘
-
-===================================================================================
 ```
 
 **One-sentence version:** Flock is the layer that lets your tools talk to *any* LLM — open-weight on your hardware, or hosted Claude / GPT — through **one URL and one API key**, with the team controls (quotas, audit, per-user keys) that the raw vendor APIs don't give you.
