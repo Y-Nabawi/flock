@@ -12,53 +12,53 @@
 
 ## 🗺️ Where Flock sits
 
-```ansi
+```
            ┌──────────────────────────────────────────────────────────────┐
-           │                       [38;2;253;230;138mYOUR USE CASES[0m                         │
+           │                       YOUR USE CASES                         │
            │             (the tools your team already uses)               │
            └──────────────────────────────────────────────────────────────┘
                   │           │          │             │            │
                   ▼           ▼          ▼             ▼            ▼
             ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-            │  [38;2;252;211;77mCursor[0m  │ │  [38;2;252;211;77mClaude[0m  │ │  [38;2;252;211;77mAider[0m   │ │  Custom  │ │   curl   │
-            │          │ │   [38;2;252;211;77mCode[0m   │ │          │ │ Python   │ │  scripts │
+            │  Cursor  │ │  Claude  │ │  Aider   │ │  Custom  │ │   curl   │
+            │          │ │   Code   │ │          │ │ Python   │ │  scripts │
             │          │ │          │ │          │ │   SDK    │ │          │
             └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘
                  │  OpenAI    │ Anthropic  │  OpenAI    │  Either    │  HTTP
                  └────────────┴────────────┴────────────┴────────────┘
                                           │
-                                          │   [38;2;253;230;138mONE URL · ONE API KEY[0m
+                                          │   ONE URL · ONE API KEY
                                           ▼
-[38;2;110;231;183m      ┌──────────────────────────────────────────────────────────────────────┐
-      │                  [1;38;2;167;243;208m⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢[0m[38;2;110;231;183m                              │[0m
-[38;2;110;231;183m      │                  [0m[38;2;52;211;153m(this is what we built)[0m[38;2;110;231;183m                             │[0m
-[38;2;110;231;183m      │  [0m[38;2;16;185;129m────────────────────────────────────────────────────────────────[0m[38;2;110;231;183m    │[0m
-[38;2;110;231;183m      │  [0m[1;38;2;167;243;208mGateway[0m[38;2;110;231;183m     OpenAI + Anthropic on /v1/chat/completions              │[0m
-[38;2;110;231;183m      │              per-user keys · daily quotas · full audit log           │[0m
-[38;2;110;231;183m      │              admin dashboard at :8080                                │[0m
-[38;2;110;231;183m      │                                                                      │[0m
-[38;2;110;231;183m      │  [0m[1;38;2;167;243;208mRouter[0m[38;2;110;231;183m      Same model on N nodes  → load-balance                   │[0m
-[38;2;110;231;183m      │              Different models per node → route by placement          │[0m
-[38;2;110;231;183m      │              Model bigger than any node → split via llama.cpp-RPC    │[0m
-[38;2;110;231;183m      │              Claude / GPT requested → proxy to vendor                │[0m
-[38;2;110;231;183m      └─────────────────────────────┬────────────────────────────────────────┘[0m[0m
+      ┌──────────────────────────────────────────────────────────────────────┐
+      │                  ⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢                              │
+      │                  (this is what we built)                             │
+      │  ────────────────────────────────────────────────────────────────    │
+      │  Gateway     OpenAI + Anthropic on /v1/chat/completions              │
+      │              per-user keys · daily quotas · full audit log           │
+      │              admin dashboard at :8080                                │
+      │                                                                      │
+      │  Router      Same model on N nodes  → load-balance                   │
+      │              Different models per node → route by placement          │
+      │              Model bigger than any node → split via llama.cpp-RPC    │
+      │              Claude / GPT requested → proxy to vendor                │
+      └─────────────────────────────┬────────────────────────────────────────┘
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
        ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
-       │   [38;2;147;197;253mEngines[0m   │       │   [38;2;147;197;253mEngines[0m   │       │   [38;2;249;168;212mEgress[0m    │
-       │  (any mix)  │       │  (any mix)  │       │   [38;2;249;168;212mproxy[0m     │
-       │  • [38;2;147;197;253mOllama[0m   │       │  • [38;2;147;197;253mOllama[0m   │       │             │
-       │  • [38;2;147;197;253mvLLM[0m     │       │  • [38;2;147;197;253mvLLM[0m     │       │ api.anthro- │
-       │  • [38;2;147;197;253mMLX-LM[0m   │       │  • [38;2;147;197;253mMLX-LM[0m   │       │ pic.com     │
-       │  • [38;2;147;197;253mllama.cpp[0m│       │  • [38;2;147;197;253mllama.cpp[0m│       │ api.openai  │
+       │   Engines   │       │   Engines   │       │   Egress    │
+       │  (any mix)  │       │  (any mix)  │       │   proxy     │
+       │  • Ollama   │       │  • Ollama   │       │             │
+       │  • vLLM     │       │  • vLLM     │       │ api.anthro- │
+       │  • MLX-LM   │       │  • MLX-LM   │       │ pic.com     │
+       │  • llama.cpp│       │  • llama.cpp│       │ api.openai  │
        └──────┬──────┘       └──────┬──────┘       │ .com        │
               │                     │              └──────┬──────┘
               ▼                     ▼                     ▼
       ┌──────────────────────────────────────────────────────────────────────┐
-      │                    [38;2;253;230;138mUNDERLYING LLMs / WEIGHTS[0m                         │
+      │                    UNDERLYING LLMs / WEIGHTS                         │
       │                                                                      │
-      │   [38;2;134;239;172mYOUR HARDWARE[0m                              [38;2;252;165;165mVENDOR APIs[0m             │
+      │   YOUR HARDWARE                              VENDOR APIs             │
       │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
       │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
       │                                                                      │
