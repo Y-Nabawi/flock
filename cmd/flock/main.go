@@ -47,6 +47,8 @@ func main() {
 		cmdConfig(args)
 	case "doctor":
 		cmdDoctor(args)
+	case "update", "upgrade":
+		cmdUpdate(args)
 	case "connect":
 		cmdConnect(args)
 	case "invite":
@@ -95,6 +97,8 @@ Commands:
   connect --list           List supported clients
   invite <name>            Create a user-scope token + share card for a teammate
   doctor                   Diagnose common problems
+  update [--check]         Check / install the latest Flock release
+  upgrade                  Alias for 'update'
   version                  Print version
   help                     Show this help
 

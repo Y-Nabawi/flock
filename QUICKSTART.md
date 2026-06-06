@@ -444,6 +444,34 @@ Same `claude` command, same key paste, you pick per-prompt.
 
 ---
 
+## ⬆️ Updating to a new version
+
+When a new release is published on GitHub, update in one command:
+
+```bash
+flock update
+```
+
+This checks the latest release, downloads the right binary for your platform, verifies the SHA-256 against the published `checksums.txt`, and replaces the binary in place. After it finishes:
+
+```bash
+flock down
+flock up
+```
+
+Other options:
+
+```bash
+flock update --check              # see if there's a new version, don't install
+flock update --version v0.1.1     # pin a specific version
+flock update --force              # reinstall even if already on the latest
+flock upgrade                     # alias of `update`
+```
+
+If your binary lives in `/usr/local/bin/` (installed with sudo), `flock update` stages the new binary next to it and prints the exact `sudo mv` command to finish.
+
+---
+
 ## 🎯 Next steps
 
 - **See the full UI tour, CLI reference, troubleshooting**: [README.md](README.md)
