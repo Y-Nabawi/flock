@@ -1019,6 +1019,8 @@ flock down                        Stop the local node
 flock status                      Show local + cluster status
 flock join <url>?token=…          Join an existing cluster as a worker
 flock doctor                      Diagnose common problems
+flock update [--check]            Check / install the latest Flock release
+flock upgrade                     Alias for `update`
 flock version                     Print version
 
 # --- nodes ---
@@ -1031,6 +1033,7 @@ flock node remove <id>            Forget a node
 flock model search <query>        Search catalog
 flock model ls                    List installed models
 flock model add <id>              Install a model (auto-delegates if sharded)
+flock model info <id>             Full details for one catalog model
 flock model remove <id>           Uninstall a model
 
 # --- sharded models (one model split across N machines) ---

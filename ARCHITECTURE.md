@@ -109,6 +109,7 @@ One binary, four modes determined by subcommand:
 | `flock join <url>?token=…` | **Worker**: agent.Loop (heartbeat with loaded_models) · agent.Server (OpenAI-compat passthrough bound to the LAN/tailnet address) · local engine adapter |
 | `flock <cmd>` (e.g. `node ls`, `model add`) | One-shot CLI; reads SQLite directly or calls the leader's admin API |
 | `flock doctor` | Stand-alone diagnostics — port availability, Ollama reachability, catalog count, hardware summary |
+| `flock update` / `flock upgrade` | Hits `api.github.com/repos/hadihonarvar/flock/releases/latest`, downloads the matching platform tarball, verifies SHA-256 against `checksums.txt`, atomically replaces the running binary. Restarts are user-driven (`flock down && flock up`). |
 
 The leader and worker share the same internal packages; the difference is which subsystems are wired up in `cmd/flock/main.go`.
 

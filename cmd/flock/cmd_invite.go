@@ -90,14 +90,14 @@ func cmdInvite(args []string) {
 		enc.SetIndent("", "  ")
 		// Marshal a lean payload — full ConnectOutput is verbose.
 		payload := map[string]any{
-			"name":         res.Record.Name,
-			"token_id":     res.Record.ID,
-			"token":        res.Token,
-			"scope":        res.Record.Scope,
-			"base_url":     res.BaseURL,
-			"quota_daily":  res.Record.QuotaDailyTokens,
-			"created_at":   res.Record.CreatedAt,
-			"snippets":     snippetsAsMap(res),
+			"name":          res.Record.Name,
+			"token_id":      res.Record.ID,
+			"token":         res.Token,
+			"scope":         res.Record.Scope,
+			"base_url":      res.BaseURL,
+			"quota_daily":   res.Record.QuotaDailyTokens,
+			"created_at":    res.Record.CreatedAt,
+			"snippets":      snippetsAsMap(res),
 			"clients_order": res.ClientsOrder,
 		}
 		_ = enc.Encode(payload)

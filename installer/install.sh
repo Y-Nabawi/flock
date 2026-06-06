@@ -312,6 +312,12 @@ print_next_steps() {
          open http://localhost:8080
        (use the admin key shown by 'flock up')
 
+  ${C_BOLD}Upgrading later${C_RESET}
+
+    From now on, you can upgrade in place — no need to re-run this installer:
+         flock update            # downloads latest release, verifies SHA-256, replaces binary
+         flock update --check    # just check, don't install
+
   ${C_BOLD}Joining an existing cluster?${C_RESET}
     Have the leader's admin run:
          flock token create --node
