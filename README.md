@@ -29,19 +29,19 @@
                                           │
                                           │   ONE URL · ONE API KEY
                                           ▼
-      ┌──────────────────────────────────────────────────────────────────────┐
-      │                  ⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢                              │
-      │                  (this is what we built)                             │
-      │  ────────────────────────────────────────────────────────────────    │
-      │  Gateway     OpenAI + Anthropic on /v1/chat/completions              │
-      │              per-user keys · daily quotas · full audit log           │
-      │              admin dashboard at :8080                                │
-      │                                                                      │
-      │  Router      Same model on N nodes  → load-balance                   │
-      │              Different models per node → route by placement          │
-      │              Model bigger than any node → split via llama.cpp-RPC    │
-      │              Claude / GPT requested → proxy to vendor                │
-      └─────────────────────────────┬────────────────────────────────────────┘
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║                  ⬢ ⬢ ⬢   FLOCK   ⬢ ⬢ ⬢                              ║
+      ║                  (this is what we built)                             ║
+      ║  ════════════════════════════════════════════════════════════════    ║
+      ║  Gateway     OpenAI + Anthropic on /v1/chat/completions              ║
+      ║              per-user keys · daily quotas · full audit log           ║
+      ║              admin dashboard at :8080                                ║
+      ║                                                                      ║
+      ║  Router      Same model on N nodes  → load-balance                   ║
+      ║              Different models per node → route by placement          ║
+      ║              Model bigger than any node → split via llama.cpp-RPC    ║
+      ║              Claude / GPT requested → proxy to vendor                ║
+      ╚═════════════════════════════╤════════════════════════════════════════╝
                                     │
               ┌─────────────────────┼─────────────────────┐
               ▼                     ▼                     ▼
