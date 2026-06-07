@@ -9,8 +9,9 @@ name: Auto-release (conventional commits)
 #   any other prefix (docs:, chore:,   → no release
 #       refactor:, test:, ci:, …)
 #
-# Skip a specific push from cutting a release by adding `[skip-release]` to
-# the commit message subject.
+# Skip a specific push from cutting a release by adding the literal token
+# "noautotag" (in square brackets) to the commit message subject. The token
+# is kept obscure so it won't accidentally appear in normal commit prose.
 #
 # Manual tags pushed via `git tag v… && git push origin v…` still trigger
 # the existing release.yml — this workflow only handles the auto path.
@@ -26,7 +27,8 @@ permissions:
 
 jobs:
   bump:
-    if: "!contains(github.event.head_commit.message, '[skip-release]')"
+    # Opt-out token must be the literal string in brackets — see header.
+    if: "!contains(github.event.head_commit.message, '[noautotag]')"
     runs-on: ubuntu-24.04
     outputs:
       new_tag: ${{ steps.tag.outputs.new_tag }}
