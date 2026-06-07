@@ -19,6 +19,8 @@ linters:
       # the error. Matches what v1.61 implicitly ignored before the v2 bump.
       exclude-functions:
         - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
         - (*database/sql.Rows).Close
         - (*database/sql.DB).Close
         - (*database/sql.Stmt).Close
@@ -47,9 +49,14 @@ linters:
         - name: redefines-builtin-id
     staticcheck:
       # Disable QF* (Quick-Fix) refactor suggestions — these are style hints,
-      # not bugs. Default-on in v2; were opt-in in v1. Also drop S1017
-      # (HasPrefix+TrimPrefix → TrimPrefix) — readability is subjective and
-      # the explicit form is clearer in the bearer-token parsing path.
+      # not bugs. Default-on in v2; were opt-in in v1. Also drop:
+      #  S1017  — HasPrefix+TrimPrefix collapse; explicit form is clearer
+      #           in the bearer-token parsing path
+      #  ST1000 — "package comment should be of the form 'Package X ...'";
+      #           we have multiple files per package with file-level header
+      #           comments, which the linter mis-detects as package
+      #           comments. Disabling avoids a global rewrite for cosmetics.
+      #  ST1020 — method-comment-should-start-with-method-name; same family
       checks:
         - all
         - -QF1001
@@ -57,6 +64,8 @@ linters:
         - -QF1008
         - -QF1012
         - -S1017
+        - -ST1000
+        - -ST1020
   exclusions:
     rules:
       - path: _test\.go$
