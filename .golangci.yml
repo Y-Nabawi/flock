@@ -2,7 +2,7 @@ version: "2"
 
 run:
   timeout: 5m
-  go: '1.22'
+  go: '1.25'
 
 linters:
   default: none
@@ -14,6 +14,16 @@ linters:
     - staticcheck
     - unused
   settings:
+    errcheck:
+      # Common Close + best-effort cleanup patterns where we knowingly drop
+      # the error. Matches what v1.61 implicitly ignored before the v2 bump.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Stmt).Close
+        - (*os.File).Close
+        - (*bufio.Scanner).Buffer
     govet:
       enable-all: true
       disable:
@@ -24,6 +34,18 @@ linters:
         - name: var-naming
         - name: indent-error-flow
         - name: redefines-builtin-id
+    staticcheck:
+      # Disable QF* (Quick-Fix) refactor suggestions — these are style hints,
+      # not bugs. Default-on in v2; were opt-in in v1. Also drop S1017
+      # (HasPrefix+TrimPrefix → TrimPrefix) — readability is subjective and
+      # the explicit form is clearer in the bearer-token parsing path.
+      checks:
+        - all
+        - -QF1001
+        - -QF1003
+        - -QF1008
+        - -QF1012
+        - -S1017
   exclusions:
     rules:
       - path: _test\.go$
