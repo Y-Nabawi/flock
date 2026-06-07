@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/engines"
@@ -72,8 +73,25 @@ type chatRequest struct {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role string `json:"role"`
+	// Content is either a JSON string (text-only) or a JSON array of content
+	// parts per the OpenAI multimodal spec, e.g.
+	//   [{"type":"text","text":"…"},
+	//    {"type":"image_url","image_url":{"url":"data:image/png;base64,…"}}]
+	// Parsed by toEngineMessages.
+	Content json.RawMessage `json:"content"`
+}
+
+// chatContentPart is one element of the OpenAI multimodal content array.
+type chatContentPart struct {
+	Type     string                `json:"type"`
+	Text     string                `json:"text,omitempty"`
+	ImageURL *chatContentImageURL  `json:"image_url,omitempty"`
+}
+
+type chatContentImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"` // low | high | auto — ignored for now
 }
 
 type chatResponse struct {
@@ -275,7 +293,7 @@ func (h *Handler) aggregateResponse(w http.ResponseWriter, r *http.Request, stre
 		ID: id, Object: "chat.completion", Created: created, Model: modelOut,
 		Choices: []chatChoice{{
 			Index:        0,
-			Message:      chatMessage{Role: "assistant", Content: text},
+			Message:      chatMessage{Role: "assistant", Content: jsonString(text)},
 			FinishReason: reason,
 		}},
 	}
@@ -336,9 +354,70 @@ func (h *Handler) lookupModelByCatalogID(catalogID string) (engineModel string, 
 func toEngineMessages(in []chatMessage) []engines.Message {
 	out := make([]engines.Message, 0, len(in))
 	for _, m := range in {
-		out = append(out, engines.Message{Role: m.Role, Content: m.Content})
+		text, images := parseChatContent(m.Content)
+		out = append(out, engines.Message{Role: m.Role, Content: text, Images: images})
 	}
 	return out
+}
+
+// parseChatContent accepts OpenAI's `content` field in either form:
+//
+//   - a plain JSON string                        → text, no images
+//   - a JSON array of {type, text|image_url} parts → text parts concatenated
+//     with a single space, image_url URLs collected into images
+//
+// Anything that fails to parse is treated as empty text — the engine layer
+// will produce a clear error if the resulting prompt is empty.
+func parseChatContent(raw json.RawMessage) (text string, images []string) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	// Try string first.
+	var asStr string
+	if err := json.Unmarshal(raw, &asStr); err == nil {
+		return asStr, nil
+	}
+	// Try array of content parts.
+	var parts []chatContentPart
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", nil
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		switch p.Type {
+		case "text":
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(p.Text)
+		case "image_url":
+			if p.ImageURL != nil && p.ImageURL.URL != "" {
+				images = append(images, stripDataURLPrefix(p.ImageURL.URL))
+			}
+		}
+	}
+	return b.String(), images
+}
+
+// jsonString returns a json.RawMessage holding the JSON encoding of s — so
+// a chatMessage built for a response renders `"content": "…"` instead of the
+// raw byte slice. Errors here are unreachable (string marshal always works).
+func jsonString(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
+
+// stripDataURLPrefix turns "data:image/png;base64,iVBORw0…" into the raw base64
+// payload. Engines like Ollama want just the base64 bytes; vLLM accepts either.
+// Non-data URLs (https://…) are returned unchanged.
+func stripDataURLPrefix(s string) string {
+	if !strings.HasPrefix(s, "data:") {
+		return s
+	}
+	if i := strings.Index(s, ","); i >= 0 {
+		return s[i+1:]
+	}
+	return s
 }
 
 func sendChunk(w http.ResponseWriter, flusher http.Flusher, c chatChunk) {

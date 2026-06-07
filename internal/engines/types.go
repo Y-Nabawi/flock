@@ -31,9 +31,15 @@ type ChatRequest struct {
 }
 
 // Message is a single chat turn.
+//
+// Images, when non-empty, are passed to vision-capable engines alongside
+// Content. Each entry is either a base64-encoded image (without the
+// "data:image/...;base64," prefix) or an absolute https URL — engines
+// negotiate which they prefer.
 type Message struct {
 	Role    string // system | user | assistant | tool
 	Content string
+	Images  []string // optional, for vision-capable models (Ollama, vLLM, MLX-LM)
 }
 
 // StreamEvent is emitted by Engine.Chat as content arrives.

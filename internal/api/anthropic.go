@@ -75,13 +75,23 @@ type anthropicResponse struct {
 }
 
 type anthropicContent struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`       // tool_use payload
-	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result link
-	Content   json.RawMessage `json:"content,omitempty"`     // tool_result body (string or array)
+	Type      string                 `json:"type"`
+	Text      string                 `json:"text,omitempty"`
+	ID        string                 `json:"id,omitempty"`
+	Name      string                 `json:"name,omitempty"`
+	Input     json.RawMessage        `json:"input,omitempty"`       // tool_use payload
+	ToolUseID string                 `json:"tool_use_id,omitempty"` // tool_result link
+	Content   json.RawMessage        `json:"content,omitempty"`     // tool_result body (string or array)
+	Source    *anthropicImageSource  `json:"source,omitempty"`      // image block
+}
+
+// anthropicImageSource matches both the {type:"base64", media_type, data}
+// and {type:"url", url} shapes from Anthropic's vision API.
+type anthropicImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"` // base64 (no data-URL prefix)
+	URL       string `json:"url,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -362,10 +372,29 @@ func anthropicMessagesToEngine(in []anthropicMessage) []engines.Message {
 		var blocks []anthropicContent
 		if err := json.Unmarshal(m.Content, &blocks); err == nil {
 			var b strings.Builder
+			var images []string
 			for _, blk := range blocks {
 				switch blk.Type {
 				case "text":
 					b.WriteString(blk.Text)
+				case "image":
+					// Anthropic shape:
+					//   {"type":"image","source":{"type":"base64","media_type":"image/png","data":"…"}}
+					//   {"type":"image","source":{"type":"url","url":"https://…"}}
+					// Both forms flatten to the engine's Images field. Ollama
+					// and vLLM accept either base64 (no data-URL prefix) or URL.
+					if blk.Source != nil {
+						switch blk.Source.Type {
+						case "base64":
+							if blk.Source.Data != "" {
+								images = append(images, blk.Source.Data)
+							}
+						case "url":
+							if blk.Source.URL != "" {
+								images = append(images, blk.Source.URL)
+							}
+						}
+					}
 				case "tool_use":
 					input := "{}"
 					if len(blk.Input) > 0 {
@@ -391,7 +420,7 @@ func anthropicMessagesToEngine(in []anthropicMessage) []engines.Message {
 						blk.ToolUseID, content))
 				}
 			}
-			out = append(out, engines.Message{Role: m.Role, Content: b.String()})
+			out = append(out, engines.Message{Role: m.Role, Content: b.String(), Images: images})
 			continue
 		}
 		// Fallback: include as raw string

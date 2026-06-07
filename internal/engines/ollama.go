@@ -247,12 +247,20 @@ func reasonFrom(s string) string {
 }
 
 func buildOllamaChatBody(req ChatRequest) map[string]any {
-	msgs := make([]map[string]string, 0, len(req.Messages)+1)
+	// Ollama's chat schema:
+	//   {"role": "...", "content": "...", "images": ["<base64 or url>", ...]}
+	// We use map[string]any (not map[string]string) so we can include the
+	// optional "images" field only when the caller actually attached one.
+	msgs := make([]map[string]any, 0, len(req.Messages)+1)
 	if req.System != "" {
-		msgs = append(msgs, map[string]string{"role": "system", "content": req.System})
+		msgs = append(msgs, map[string]any{"role": "system", "content": req.System})
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, map[string]string{"role": m.Role, "content": m.Content})
+		entry := map[string]any{"role": m.Role, "content": m.Content}
+		if len(m.Images) > 0 {
+			entry["images"] = m.Images
+		}
+		msgs = append(msgs, entry)
 	}
 	options := map[string]any{}
 	if req.Temperature != nil {
