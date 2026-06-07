@@ -106,6 +106,14 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 			HealthPort: port,
 			// Worker probes via 127.0.0.1; the leader will dial via worker's address below.
 			HealthHost: "127.0.0.1",
+			// If the rpc-server dies mid-stream the model goes unavailable —
+			// auto-restart up to 5 times (1s, 2s, 4s, 8s, 16s backoffs) so
+			// an admin doesn't have to re-run `flock shard create` for a
+			// transient OOM or crash. After 5 the process enters "crashloop"
+			// and the operator needs to intervene.
+			Restart:        true,
+			MaxRestarts:    5,
+			RestartBackoff: time.Second,
 		}
 		o.Log.Info("starting rpc shard", "model", entry.ID, "node", w.ID, "port", port)
 		if _, err := o.callWorkerStart(ctx, w, spec); err != nil {
@@ -136,6 +144,12 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	coordSpec := agent.ProcessSpec{
 		ID:      coordID,
 		Command: "llama-server",
+		// Coordinator also benefits from restart-on-crash — without it,
+		// llama-server dying takes the model offline even if every rpc-server
+		// is fine.
+		Restart:        true,
+		MaxRestarts:    5,
+		RestartBackoff: time.Second,
 		Args: []string{
 			"-m", entry.Source.Path,
 			"--rpc", strings.Join(rpcEndpoints, ","),

@@ -3,10 +3,11 @@
 // shard). Wraps os/exec with start/stop/list/logs + a TCP-port readiness
 // probe so callers can wait until a launched process is actually serving.
 //
-// Current scope: no automatic restart on crash, no resource limits, no
-// process namespacing. The orchestrator marks failed shards and the
-// admin re-runs `flock model add`. Restart-on-crash is the obvious
-// follow-up.
+// Supports optional restart-on-crash: set ProcessSpec.Restart and the
+// supervisor will re-launch the process (with exponential backoff, capped
+// at MaxRestarts) when it exits abnormally. Used by the sharding
+// orchestrator so a single rpc-server dying mid-stream doesn't take the
+// model offline until an admin re-runs `flock shard create`.
 package agent
 
 import (
@@ -34,6 +35,19 @@ type ProcessSpec struct {
 	HealthPort int               // optional; if >0, waitReady probes TCP this port
 	HealthHost string            // default "127.0.0.1"
 	LogLines   int               // ring-buffer capacity (default 200)
+
+	// Restart, when true, makes the supervisor re-launch the process on
+	// abnormal exit (anything other than an explicit Stop). Sharding uses
+	// this so a single rpc-server dying mid-stream doesn't take a whole
+	// model offline.
+	Restart bool
+	// MaxRestarts caps how many times we'll retry before giving up and
+	// marking the process "crashloop". 0 → unlimited (not recommended).
+	// Default applied by Start: 5.
+	MaxRestarts int
+	// RestartBackoff is the initial backoff between restarts; doubles on
+	// each consecutive failure up to a 30s cap. Default 1s.
+	RestartBackoff time.Duration
 }
 
 // ProcessInfo is the observable state of a managed process.
@@ -43,9 +57,12 @@ type ProcessInfo struct {
 	Args      []string  `json:"args"`
 	PID       int       `json:"pid"`
 	StartedAt time.Time `json:"started_at"`
-	Status    string    `json:"status"` // starting | running | stopped | failed
-	ExitErr   string    `json:"exit_err,omitempty"`
-	Address   string    `json:"address,omitempty"`
+	// Status: starting | running | stopped | failed | crashloop.
+	// "crashloop" means Restart was enabled but MaxRestarts was exceeded.
+	Status   string `json:"status"`
+	ExitErr  string `json:"exit_err,omitempty"`
+	Address  string `json:"address,omitempty"`
+	Restarts int    `json:"restarts,omitempty"` // count of automatic restarts so far
 }
 
 type Process struct {
@@ -89,6 +106,12 @@ func (s *Supervisor) Start(ctx context.Context, spec ProcessSpec) (*ProcessInfo,
 	if spec.HealthHost == "" {
 		spec.HealthHost = "127.0.0.1"
 	}
+	if spec.Restart && spec.MaxRestarts == 0 {
+		spec.MaxRestarts = 5
+	}
+	if spec.Restart && spec.RestartBackoff == 0 {
+		spec.RestartBackoff = time.Second
+	}
 
 	s.mu.Lock()
 	if _, ok := s.procs[spec.ID]; ok {
@@ -97,6 +120,45 @@ func (s *Supervisor) Start(ctx context.Context, spec ProcessSpec) (*ProcessInfo,
 	}
 	s.mu.Unlock()
 
+	addr := ""
+	if spec.HealthPort > 0 {
+		addr = net.JoinHostPort(spec.HealthHost, strconv.Itoa(spec.HealthPort))
+	}
+
+	logBuf := newRingBuffer(spec.LogLines)
+
+	p := &Process{
+		Info: ProcessInfo{
+			ID:        spec.ID,
+			Command:   spec.Command,
+			Args:      spec.Args,
+			StartedAt: time.Now(),
+			Status:    "starting",
+			Address:   addr,
+		},
+		spec:   spec,
+		logBuf: logBuf,
+	}
+
+	s.mu.Lock()
+	s.procs[spec.ID] = p
+	s.mu.Unlock()
+
+	if err := s.launchProc(ctx, p); err != nil {
+		s.mu.Lock()
+		delete(s.procs, spec.ID)
+		s.mu.Unlock()
+		return &p.Info, err
+	}
+
+	return s.snapshot(p), nil
+}
+
+// launchProc starts the process once; called by Start and (when Restart is
+// enabled) by the restart loop in waitExit. Assumes the *Process is already
+// registered in s.procs and holds the ring buffer.
+func (s *Supervisor) launchProc(ctx context.Context, p *Process) error {
+	spec := p.spec
 	procCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, spec.Command, spec.Args...)
 	if spec.WorkDir != "" {
@@ -111,55 +173,35 @@ func (s *Supervisor) Start(ctx context.Context, spec ProcessSpec) (*ProcessInfo,
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("stderr pipe: %w", err)
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	logBuf := newRingBuffer(spec.LogLines)
-	go readLines(stdout, logBuf)
-	go readLines(stderr, logBuf)
+	go readLines(stdout, p.logBuf)
+	go readLines(stderr, p.logBuf)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("start %s: %w", filepath.Base(spec.Command), err)
+		return fmt.Errorf("start %s: %w", filepath.Base(spec.Command), err)
 	}
 
-	addr := ""
-	if spec.HealthPort > 0 {
-		addr = net.JoinHostPort(spec.HealthHost, strconv.Itoa(spec.HealthPort))
-	}
+	p.mu.Lock()
+	p.cmd = cmd
+	p.cancel = cancel
+	p.Info.PID = cmd.Process.Pid
+	p.Info.StartedAt = time.Now()
+	p.Info.ExitErr = ""
+	p.Info.Status = "starting"
+	p.mu.Unlock()
 
-	p := &Process{
-		Info: ProcessInfo{
-			ID:        spec.ID,
-			Command:   spec.Command,
-			Args:      spec.Args,
-			PID:       cmd.Process.Pid,
-			StartedAt: time.Now(),
-			Status:    "starting",
-			Address:   addr,
-		},
-		spec:   spec,
-		cmd:    cmd,
-		cancel: cancel,
-		logBuf: logBuf,
-	}
-
-	s.mu.Lock()
-	s.procs[spec.ID] = p
-	s.mu.Unlock()
-
-	// Wait for the process to either become reachable on its health port,
-	// or fail. Done in foreground because callers want to know when their
-	// rpc-server is ready before launching the coordinator.
 	if spec.HealthPort > 0 {
 		if err := waitReady(ctx, spec.HealthHost, spec.HealthPort, 30*time.Second); err != nil {
 			s.markFailed(p, fmt.Errorf("health probe: %w", err))
-			return &p.Info, fmt.Errorf("process did not become ready: %w", err)
+			return fmt.Errorf("process did not become ready: %w", err)
 		}
 	}
 
@@ -167,11 +209,10 @@ func (s *Supervisor) Start(ctx context.Context, spec ProcessSpec) (*ProcessInfo,
 	p.Info.Status = "running"
 	p.mu.Unlock()
 
-	// Background waiter: capture exit status.
 	go s.waitExit(p)
 
-	s.log.Info("process started", "id", spec.ID, "pid", p.Info.PID, "command", spec.Command, "addr", addr)
-	return s.snapshot(p), nil
+	s.log.Info("process started", "id", spec.ID, "pid", p.Info.PID, "command", spec.Command, "addr", p.Info.Address, "restarts", p.Info.Restarts)
+	return nil
 }
 
 // Stop sends SIGTERM, waits up to 10s, then SIGKILLs.
@@ -274,9 +315,9 @@ func (s *Supervisor) markFailed(p *Process, err error) {
 func (s *Supervisor) waitExit(p *Process) {
 	err := p.cmd.Wait()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.Info.Status == "stopped" {
-		return // we initiated this
+		p.mu.Unlock()
+		return // we initiated this — no restart
 	}
 	if err != nil {
 		p.Info.Status = "failed"
@@ -284,7 +325,57 @@ func (s *Supervisor) waitExit(p *Process) {
 	} else {
 		p.Info.Status = "stopped"
 	}
-	s.log.Info("process exited", "id", p.spec.ID, "pid", p.Info.PID, "status", p.Info.Status, "err", err)
+	prevPID := p.Info.PID
+	restartEnabled := p.spec.Restart
+	restarts := p.Info.Restarts
+	maxRestarts := p.spec.MaxRestarts
+	backoff := p.spec.RestartBackoff
+	p.mu.Unlock()
+
+	s.log.Info("process exited", "id", p.spec.ID, "pid", prevPID, "status", p.Info.Status, "err", err, "restarts", restarts)
+
+	if !restartEnabled {
+		return
+	}
+	if maxRestarts > 0 && restarts >= maxRestarts {
+		p.mu.Lock()
+		p.Info.Status = "crashloop"
+		p.mu.Unlock()
+		s.log.Error("process exceeded MaxRestarts — entering crashloop", "id", p.spec.ID, "restarts", restarts, "max", maxRestarts)
+		return
+	}
+
+	// Exponential backoff up to 30s. Each consecutive failure doubles.
+	wait := backoff
+	for i := 0; i < restarts; i++ {
+		wait *= 2
+		if wait > 30*time.Second {
+			wait = 30 * time.Second
+			break
+		}
+	}
+	s.log.Warn("process exited abnormally — restarting", "id", p.spec.ID, "wait", wait, "attempt", restarts+1)
+	time.Sleep(wait)
+
+	// Was the process Stopped during the backoff sleep?
+	p.mu.Lock()
+	if p.Info.Status == "stopped" {
+		p.mu.Unlock()
+		return
+	}
+	p.Info.Restarts = restarts + 1
+	p.mu.Unlock()
+
+	// Re-launch. launchProc spawns its own waitExit goroutine on success.
+	if err := s.launchProc(context.Background(), p); err != nil {
+		s.log.Error("restart failed", "id", p.spec.ID, "err", err)
+		// waitExit recurses via launchProc's goroutine, so a re-launch failure
+		// here means we don't get another chance until external action.
+		p.mu.Lock()
+		p.Info.Status = "failed"
+		p.Info.ExitErr = "restart failed: " + err.Error()
+		p.mu.Unlock()
+	}
 }
 
 // waitReady polls the given host:port via TCP until it accepts a connection

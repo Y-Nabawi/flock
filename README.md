@@ -811,7 +811,7 @@ flock shard remove llama-3.3-70b-sharded    # stops coordinator + every rpc-serv
 Or open `http://leader:8080` → **Shards** tab → "Create sharded model" form + per-model "Tear down" buttons.
 
 **Caveats (v0.4):**
-- No automatic restart on shard crash — the admin re-runs `flock shard create`.
+- Shard crash recovery is automatic for up to 5 restarts with exponential backoff (1s, 2s, 4s, 8s, 16s). After that the process enters `crashloop` state and the admin must intervene — typically by re-running `flock shard create`. Both `rpc-server` and the `llama-server` coordinator restart this way. See `internal/agent/supervisor.go`.
 - Coordinator always runs on the leader.
 - Worker bin-packing is naive (descending free-RAM); doesn't factor GPU memory or current load.
 

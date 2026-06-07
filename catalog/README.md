@@ -186,7 +186,9 @@ When a request for `qwen3-coder-30b` can't be served (engine down, 503, timeout)
 2. Verify the model actually loads in at least one engine you list under `recommended_engines`.
 3. Measure `size_bytes` from the downloaded weight files (or `ollama show <tag> --modelfile` for Ollama entries).
 4. Set `hardware.min_ram_gb` conservatively — better to refuse install on borderline hardware than to crash the engine.
-5. Open a PR. The CI catalog smoke test will fail if the file doesn't parse, the ID is missing, or the filename doesn't match the ID.
+5. Open a PR. Two CI tests guard the catalog:
+   - **Per-PR**: `cmd/flock/docs_drift_test.go` parses every YAML and asserts the filename matches the `id:` field.
+   - **Daily**: `.github/workflows/catalog-live.yml` HEADs every entry's `source:` against Ollama / HuggingFace and fails if a tag is gone (renamed, deleted, repo private). Run it locally with `CATALOG_LIVE_CHECK=1 go test -run TestCatalogSourcesReachable ./cmd/flock/`.
 
 For models that need GGUF prep or aren't on Ollama, include the prep steps as a top-of-file comment (see `llama-3.3-70b-sharded.yaml` for an example).
 

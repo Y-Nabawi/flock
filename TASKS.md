@@ -26,12 +26,12 @@ These are the gaps between marketing copy and what the binary actually does toda
 
 - **Tailscale `tsnet` mesh** — interface defined, LAN backend ships meanwhile. Plug a `tsnet` backend into `internal/mesh/` to support cross-network workers. (tracked as M5-T09 below)
 - **NetBird mesh backend** — same shape as Tailscale, different overlay; deferred to v1.0. (tracked as M5-T10)
-- **Shard crash recovery** — sharding auto-orchestration ships in v0.4, but if a worker's `rpc-server` dies mid-stream, the model goes unavailable until the admin re-runs `flock shard create`. v0.5 should add a watcher that restarts exited shards.
+- ~~**Shard crash recovery**~~ — ✅ shipped 2026-06-07. Supervisor auto-restarts `rpc-server` (and the coordinator `llama-server`) up to 5 times with exponential backoff before declaring `crashloop`. See `internal/agent/supervisor.go` + `internal/scheduler/sharding.go`.
 - **Coordinator on a worker** — today the coordinator (`llama-server`) always runs on the leader. v0.5 should allow it to run on the strongest worker, especially when the leader has weak hardware.
 - **Auto-rebalancing sharding** — shard count is currently picked by the admin (`flock shard create <model> <N>`). v1.0 should pick `N` automatically from worker count, model size, and free VRAM. (tracked as M5-T11)
 - **Automatic GGUF distribution** — for sharded models the GGUF must already be on the leader; v0.5 should auto-download from HF or stream from the leader to workers as needed. (tracked as M5-T12)
 - **`rpc-server` binary bundling** — sharding requires `rpc-server` on every node, but Homebrew doesn't ship it; users currently source-build llama.cpp. (tracked as M4-T14)
-- **Catalog smoke-test CI** — catalog YAMLs aren't currently verified to actually boot. Before catalog expansion (M4-T06), we need a CI job that smoke-tests each entry. (tracked as M4-T15)
+- ~~**Catalog smoke-test CI**~~ — ✅ shipped 2026-06-07 (M4-T15). Two layers: per-PR parse + filename-matches-id (in the existing drift test), and a daily upstream HEAD probe (`.github/workflows/catalog-live.yml` runs `CATALOG_LIVE_CHECK=1 go test -run TestCatalogSourcesReachable ./cmd/flock/`).
 
 **API surface**
 

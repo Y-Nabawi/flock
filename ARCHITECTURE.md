@@ -243,7 +243,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 #### Failure handling
 
 - If any rpc-server fails to come up (readiness timeout, process exits), `Orchestrator.rollback()` stops every previously-launched process and returns the error to the CLI/UI.
-- If a shard process crashes *after* CreateSharded returns, v0.4 does nothing — the model becomes unavailable until the admin re-runs the create. v0.5 will add a watcher loop that detects exited shards and restarts them.
+- If a shard process crashes *after* CreateSharded returns, the supervisor auto-restarts it up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s; capped at 30s for any longer chain). After 5 the process enters `crashloop` state and stays there — the admin must intervene. Both `rpc-server` (per-shard) and the `llama-server` coordinator are restart-enabled; the policy is set on the `agent.ProcessSpec` at launch time in `internal/scheduler/sharding.go`. Explicit `Stop()` suppresses any pending restart.
 
 #### Out of scope for v0.4
 
