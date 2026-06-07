@@ -76,6 +76,26 @@ func (r *Router) Delete(ctx context.Context, modelID string) error {
 	return r.local.Delete(ctx, modelID)
 }
 
+// Embed picks an engine for this embedding request, dispatches if the engine
+// supports embeddings, and tracks in-flight count for load balancing.
+//
+// If the picked engine does not implement engines.EmbedEngine, returns an
+// error — callers surface this as a 501 Not Implemented at the API layer.
+func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.EmbedResponse, error) {
+	eng, nodeID, err := r.pick(ctx, req.Model)
+	if err != nil {
+		return engines.EmbedResponse{}, err
+	}
+	r.incInflight(nodeID)
+	defer r.decInflight(nodeID)
+
+	ee, ok := eng.(engines.EmbedEngine)
+	if !ok {
+		return engines.EmbedResponse{}, fmt.Errorf("engine %s does not support embeddings", eng.Name())
+	}
+	return ee.Embed(ctx, req)
+}
+
 // Chat picks an engine for this request, dispatches, and tracks in-flight
 // count so subsequent requests can balance across replicas.
 func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {

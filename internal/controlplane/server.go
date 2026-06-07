@@ -131,6 +131,7 @@ func (s *Server) routes() http.Handler {
 		r.Use(api.QuotaMiddleware(s.store))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
+		r.Post("/embeddings", s.openaiH.Embeddings)
 		r.Post("/messages", s.dispatchAnthropicMessages)
 		r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
 	})

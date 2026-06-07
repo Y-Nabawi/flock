@@ -118,6 +118,63 @@ func (o *Ollama) Pull(ctx context.Context, modelID string, onProgress func(statu
 }
 
 // Delete removes a model from Ollama.
+// Embed calls Ollama's POST /api/embed.
+//
+// Ollama accepts either a single input string or a list; we always send the
+// list form for predictability. The response shape is:
+//
+//	{
+//	  "model": "nomic-embed-text",
+//	  "embeddings": [[...], [...]],
+//	  "prompt_eval_count": 12
+//	}
+func (o *Ollama) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, error) {
+	if len(req.Inputs) == 0 {
+		return EmbedResponse{}, fmt.Errorf("embed: at least one input is required")
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": req.Model,
+		"input": req.Inputs,
+	})
+	if err != nil {
+		return EmbedResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return EmbedResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := o.client.Do(httpReq)
+	if err != nil {
+		return EmbedResponse{}, fmt.Errorf("embed request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return EmbedResponse{}, fmt.Errorf("ollama embed %s: %s", resp.Status, string(b))
+	}
+
+	var out struct {
+		Embeddings      [][]float32 `json:"embeddings"`
+		PromptEvalCount int         `json:"prompt_eval_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return EmbedResponse{}, fmt.Errorf("decode embed response: %w", err)
+	}
+	if len(out.Embeddings) != len(req.Inputs) {
+		return EmbedResponse{}, fmt.Errorf("ollama embed: expected %d vectors, got %d", len(req.Inputs), len(out.Embeddings))
+	}
+	return EmbedResponse{
+		Vectors: out.Embeddings,
+		Usage: &Usage{
+			PromptTokens: out.PromptEvalCount,
+			TotalTokens:  out.PromptEvalCount,
+		},
+	}, nil
+}
+
 func (o *Ollama) Delete(ctx context.Context, modelID string) error {
 	body, _ := json.Marshal(map[string]any{"name": modelID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, o.endpoint+"/api/delete", bytes.NewReader(body))
