@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"time"
+
+	"github.com/hadihonarvar/flock/internal/api"
 )
 
 // cmdUsage prints the recent usage records.
@@ -45,26 +47,48 @@ func cmdUsage(args []string) {
 		return
 	}
 
-	fmt.Printf("%-19s %-14s %-22s %-12s %5s %5s %7s %s\n",
-		"TIME", "USER/KEY", "MODEL", "PROTOCOL", "PROMPT", "COMPL", "MS", "OUTCOME")
+	fmt.Printf("%-19s %-14s %-22s %-12s %5s %5s %7s %8s %s\n",
+		"TIME", "USER/KEY", "MODEL", "PROTOCOL", "PROMPT", "COMPL", "MS", "COST", "OUTCOME")
+	var totalMicros int64
 	count := 0
 	for _, r := range rows {
 		if *user != "" && fmt.Sprint(r["UserID"]) != *user {
 			continue
 		}
 		ts := parseTime(r["TS"])
-		fmt.Printf("%-19s %-14s %-22s %-12s %5v %5v %7v %s\n",
+		micros := asInt64(r["CostMicros"])
+		totalMicros += micros
+		fmt.Printf("%-19s %-14s %-22s %-12s %5v %5v %7v %8s %s\n",
 			ts.Format("2006-01-02 15:04:05"),
 			truncStr(fmt.Sprint(firstNonEmpty(r["UserID"], r["APIKeyID"])), 14),
 			truncStr(fmt.Sprint(r["Model"]), 22),
 			fmt.Sprint(r["Protocol"]),
 			r["PromptTokens"], r["CompletionTokens"], r["LatencyMS"],
+			api.FormatCostUSD(micros),
 			r["Outcome"])
 		count++
 		if count >= *limit {
 			break
 		}
 	}
+	if count > 0 {
+		fmt.Printf("\n  Showing %d records · total cost: %s (vendor egress only — local engines are $0)\n",
+			count, api.FormatCostUSD(totalMicros))
+	}
+}
+
+// asInt64 coerces a JSON-decoded number (which becomes float64) to int64.
+// Returns 0 for missing or non-numeric values.
+func asInt64(v any) int64 {
+	switch x := v.(type) {
+	case float64:
+		return int64(x)
+	case int:
+		return int64(x)
+	case int64:
+		return x
+	}
+	return 0
 }
 
 func parseTime(v any) time.Time {
