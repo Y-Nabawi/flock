@@ -18,7 +18,7 @@ These reuse the existing Engine interface, router, and store. They add endpoints
 | --- | --- | --- | --- | --- |
 | **Vision (image input)** | `POST /v1/chat/completions` with `image_url` content blocks | Ollama (`images: []`), vLLM, MLX-LM | `engines.Message.Content` → needs `Images []string`. OpenAI content-array parsing in `internal/api/openai.go`. Anthropic `image` blocks in `internal/api/anthropic.go`. Catalog already has `vision` capability. | **Shipped in v0.4 (this commit)** for Ollama |
 | **Embeddings** | `POST /v1/embeddings` | Ollama (`/api/embeddings`), vLLM (`/v1/embeddings`), MLX-LM | New `Engine.Embed(ctx, model, input) []float32` method. Catalog entries get `embedding` capability + `embedding_dim`. Router picks by capability. | Planned |
-| **Rerank** | `POST /v1/rerank` (Cohere shape) | BGE / cohere-rerank via vLLM, llama.cpp custom | Sibling to embeddings. `Engine.Rerank(ctx, model, query, docs)`. | Planned |
+| **Rerank** | `POST /v1/rerank` (Cohere shape) | BGE / Jina / mxbai cross-encoders via llama-server `/v1/rerank` or TEI | Deferred — no Ollama path; needs direct llama-server adapter or TEI engine. Tracked for after the llama.cpp single-node driver lands (v0.6). | Deferred |
 
 ### B. Stretches the gateway — works but requires new code paths (v0.5–v0.6)
 
@@ -99,9 +99,9 @@ The only **breaking changes** are (3) router rewrite and (8) package layout — 
 
 ```
 v0.4.0 (done)  → Vision (Ollama path)
-v0.4.x         → Embeddings · Rerank · Cost transparency (bet 1)
+v0.4.x         → Embeddings (done) · Cost transparency (bet 1)
 v0.5           → ASR · TTS · Latency-aware fallback (bet 2)
-v0.6           → Image generation · Hardware abstraction (bet 3) · Signed catalogs (bet 5)
+v0.6           → Rerank (cross-encoder, via llama-server) · Image generation · Hardware abstraction (bet 3) · Signed catalogs (bet 5)
 v0.7           → Edge runtime / arm64 NAS packages (bet 4)
 v1.0           → Embeddable Go library (bet 6) · API stability commitment
 ```
