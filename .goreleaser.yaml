@@ -69,14 +69,23 @@ release:
     ## Install
 
     ```bash
-    curl -fsSL https://get.flock.dev | sh
+    curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh | sh
     ```
 
-    Or with Homebrew:
+    More options (specific version, custom install dir, join an existing cluster) — see [QUICKSTART.md](https://github.com/hadihonarvar/flock/blob/main/QUICKSTART.md).
+
+    ## Upgrading
+
+    Already running an earlier version? Just run:
 
     ```bash
-    brew install hadihonarvar/tap/flock
+    flock update
     ```
+
+    ## Links
+
+    - Website: [flockllm.com](https://flockllm.com)
+    - Maintainer: [Hadi Honarvar Nazari](https://www.linkedin.com/in/hadi-honarvar-nazari/) — `hadi.work.ca@gmail.com`
 
 # Homebrew tap publishing is disabled until the hadihonarvar/homebrew-tap
 # repo exists. To re-enable:
