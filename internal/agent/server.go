@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/engines"
 )
 
@@ -74,13 +75,44 @@ func (s *Server) Start(ctx context.Context, listen string) error {
 	}
 }
 
+// auth gates every worker endpoint. Accepts either:
+//
+//	X-Flock-Auth: v=1,id=...,ts=...,sig=...   (preferred — HMAC, token never travels)
+//	Authorization: Bearer <token>             (transition mode — kept for one release)
+//
+// HMAC is tried first when the header is present. If verification fails, the
+// request is rejected without falling through to bearer (catches active
+// attempts to downgrade). When only Authorization is present, we accept the
+// bearer for backwards compat — the user can disable that path by setting
+// FLOCK_REJECT_BEARER=1 in the worker environment once they've confirmed
+// every leader is signing.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Token == "" {
+			http.Error(w, "worker has no token configured", http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get(auth.HMACHeader) != "" {
+			// Worker only knows its own token, so the lookup ignores nodeID.
+			if _, err := auth.VerifyRequest(r, func(string) (string, error) {
+				return s.Token, nil
+			}); err != nil {
+				http.Error(w, "unauthorized (hmac): "+err.Error(), http.StatusUnauthorized)
+				return
+			}
+			next(w, r)
+			return
+		}
+		if os.Getenv("FLOCK_REJECT_BEARER") == "1" {
+			http.Error(w, "unauthorized (HMAC required; bearer disabled)", http.StatusUnauthorized)
+			return
+		}
+		// Bearer fallback.
 		got := r.Header.Get("Authorization")
 		if strings.HasPrefix(got, "Bearer ") {
 			got = strings.TrimPrefix(got, "Bearer ")
 		}
-		if s.Token == "" || got != s.Token {
+		if got != s.Token {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

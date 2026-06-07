@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/engines"
 )
 
@@ -124,13 +125,24 @@ func (a *Agent) Loop(ctx context.Context) error {
 
 // post returns the HTTP status code (0 if the request never reached upstream)
 // and an error if one occurred.
+//
+// Two auth headers are stamped:
+//   - Authorization: Bearer <token>     — legacy, accepted by the leader's
+//     existing auth middleware for register / heartbeat scope=node tokens
+//   - X-Flock-Auth: HMAC               — replaces transmitting the token in
+//     clear text for any leader that prefers HMAC verification
+//
+// The leader's handler verifies HMAC first when the header is present and
+// falls back to bearer only if HMAC verification fails (transition mode).
+// In a future release the bearer header on these endpoints will go away.
 func (a *Agent) post(ctx context.Context, path string, body []byte) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.LeaderURL+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+a.Token)
+	req.Header.Set("Authorization", "Bearer "+a.Token) // legacy / register path
+	auth.SignRequest(req, a.NodeID, a.Token)
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return 0, err

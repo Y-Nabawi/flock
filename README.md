@@ -700,6 +700,7 @@ observability:
 | `FLOCK_CATALOG_DIR` | `catalog_dir` |
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
+| `FLOCK_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader is on v0.5+. |
 
 ### Not yet configurable (roadmap)
 

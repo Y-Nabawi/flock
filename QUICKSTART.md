@@ -540,11 +540,11 @@ flock up
 Flock v0.4 assumes a **trusted network** (LAN or [Tailscale](https://tailscale.com/)). Specifically:
 
 - **User API keys** (admin / user scope) are **sha256-hashed** in the database. The plaintext shown at creation time is the only way to use the key.
-- **Worker tokens** (the shared secret between leader and worker) are **stored plaintext** in `nodes.worker_token`. Anyone with read access to the leader's SQLite file can impersonate a worker. v0.5 plans HMAC-based mutual auth.
+- **Worker tokens** (the shared secret between leader and worker) are stored on the `nodes.worker_token` column. As of v0.5, control-plane traffic uses **HMAC-SHA256 signatures** so the token itself isn't transmitted on the wire after the initial join — the agent and leader both sign with the per-node token. The SQLite file still holds the secret, so a stolen DB still lets an attacker impersonate a worker; encrypt the DB at rest if you can't trust the host. Set `FLOCK_REJECT_BEARER=1` on workers to refuse the bearer-fallback path entirely (HMAC-only).
 - **Worker HTTP servers** bind only to the mesh address (LAN / tailnet IP), never to `0.0.0.0`. Network reachability is the first line of defense.
 - The **embedded web UI** authenticates by pasted admin key (stored in browser `localStorage`).
 
-If you're not on a trusted LAN, run the cluster **behind Tailscale** or a similar zero-trust overlay until the HMAC story lands.
+If you're not on a trusted LAN, still run the cluster **behind Tailscale** or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer fallback exists for one transition release; set `FLOCK_REJECT_BEARER=1` once every leader and worker is on v0.5+.
 
 ---
 

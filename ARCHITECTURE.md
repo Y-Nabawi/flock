@@ -180,7 +180,7 @@ Each worker runs a thin OpenAI-compatible HTTP server bound to the address it re
 | `GET /v1/models` | Calls `Engine.List(ctx)` and emits the OpenAI `{"object":"list","data":[…]}` shape. |
 | `POST /v1/chat/completions` | Decodes the OpenAI request, calls `Engine.Chat(ctx, req)`, re-emits as SSE (stream=true) or aggregated JSON (stream=false). |
 
-Auth is token-only: the request must carry `Authorization: Bearer <worker_token>`. The worker_token is established at registration and stored on the leader's `nodes` row.
+Auth is HMAC-based: the leader and agent both sign requests with the per-node worker_token, set at registration. Signature header `X-Flock-Auth: v=1,id=<nodeID>,ts=<unix>,sig=<hex>` carries an HMAC-SHA256 of `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the token. Receiver re-derives and constant-time compares; ts must be within ±5 minutes (replay window). The bearer fallback (`Authorization: Bearer <worker_token>`) is still accepted for one transition release; set `FLOCK_REJECT_BEARER=1` on workers to refuse it. See `internal/auth/hmac.go`.
 
 ### Placements (`internal/store/sqlite.go → model_placements`)
 

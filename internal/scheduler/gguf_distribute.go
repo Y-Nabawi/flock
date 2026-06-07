@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
@@ -45,6 +46,7 @@ func (o *Orchestrator) ensureGGUFOnNode(ctx context.Context, node store.Node, lo
 	}.Encode()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, checkURL, nil)
 	req.Header.Set("Authorization", "Bearer "+node.WorkerToken)
+	auth.SignRequest(req, node.ID, node.WorkerToken)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("file check: %w", err)

@@ -44,7 +44,7 @@ These are the gaps between marketing copy and what the binary actually does toda
 **Security / auth**
 
 - **OIDC** for the web UI — currently the UI takes a pasted admin key. Explicitly killed in [ROADMAP](ROADMAP.md#explicitly-killed-or-sibling-projected-scope) — out of scope for OSS.
-- **Worker token security** — stored plaintext on `nodes.worker_token`. Replace with HMAC-based mutual auth. v0.5 target.
+- ~~**Worker token security**~~ — ✅ shipped 2026-06-07. HMAC-SHA256 over (v1, method, path, ts) keyed by the per-node token. Token now stays in the DB; only signatures travel. 5-min replay window. Bearer fallback retained for one transition release (disable with `FLOCK_REJECT_BEARER=1` on workers). See `internal/auth/hmac.go`.
 
 **Operations / hardware**
 

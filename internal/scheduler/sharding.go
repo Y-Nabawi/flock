@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/agent"
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
 )
@@ -386,7 +387,8 @@ func (o *Orchestrator) callWorkerStart(ctx context.Context, node store.Node, spe
 	url := workerURL(node.Address) + "/v1/process/start"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+node.WorkerToken)
+	req.Header.Set("Authorization", "Bearer "+node.WorkerToken) // transition; HMAC below is the real auth
+	auth.SignRequest(req, node.ID, node.WorkerToken)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -409,6 +411,7 @@ func (o *Orchestrator) callWorkerStop(ctx context.Context, node store.Node, proc
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+node.WorkerToken)
+	auth.SignRequest(req, node.ID, node.WorkerToken)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {
 		return err
