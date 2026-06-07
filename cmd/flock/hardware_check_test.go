@@ -12,10 +12,10 @@ import (
 // expect.
 func TestParseModelAddArgs(t *testing.T) {
 	cases := []struct {
-		name       string
-		args       []string
-		wantID     string
-		wantForce  bool
+		name      string
+		args      []string
+		wantID    string
+		wantForce bool
 	}{
 		{"id only", []string{"qwen3.6-27b"}, "qwen3.6-27b", false},
 		{"id then force", []string{"qwen3.6-27b", "--force"}, "qwen3.6-27b", true},

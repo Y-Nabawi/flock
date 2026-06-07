@@ -84,9 +84,9 @@ type chatMessage struct {
 
 // chatContentPart is one element of the OpenAI multimodal content array.
 type chatContentPart struct {
-	Type     string                `json:"type"`
-	Text     string                `json:"text,omitempty"`
-	ImageURL *chatContentImageURL  `json:"image_url,omitempty"`
+	Type     string               `json:"type"`
+	Text     string               `json:"text,omitempty"`
+	ImageURL *chatContentImageURL `json:"image_url,omitempty"`
 }
 
 type chatContentImageURL struct {

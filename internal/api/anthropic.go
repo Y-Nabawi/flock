@@ -75,14 +75,14 @@ type anthropicResponse struct {
 }
 
 type anthropicContent struct {
-	Type      string                 `json:"type"`
-	Text      string                 `json:"text,omitempty"`
-	ID        string                 `json:"id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Input     json.RawMessage        `json:"input,omitempty"`       // tool_use payload
-	ToolUseID string                 `json:"tool_use_id,omitempty"` // tool_result link
-	Content   json.RawMessage        `json:"content,omitempty"`     // tool_result body (string or array)
-	Source    *anthropicImageSource  `json:"source,omitempty"`      // image block
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	ID        string                `json:"id,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Input     json.RawMessage       `json:"input,omitempty"`       // tool_use payload
+	ToolUseID string                `json:"tool_use_id,omitempty"` // tool_result link
+	Content   json.RawMessage       `json:"content,omitempty"`     // tool_result body (string or array)
+	Source    *anthropicImageSource `json:"source,omitempty"`      // image block
 }
 
 // anthropicImageSource matches both the {type:"base64", media_type, data}

@@ -16,15 +16,15 @@ import (
 // observe which model actually served them.
 type stubEngine struct {
 	name      string
-	failFor   map[string]error    // model id → error to return (or success if absent)
-	calls     []string            // models we were asked to serve, in order
-	served    string              // last model that succeeded
+	failFor   map[string]error // model id → error to return (or success if absent)
+	calls     []string         // models we were asked to serve, in order
+	served    string           // last model that succeeded
 	embedFail map[string]error
 }
 
-func (s *stubEngine) Name() string                              { return s.name }
-func (s *stubEngine) Endpoint() string                          { return "stub://" + s.name }
-func (s *stubEngine) Health(ctx context.Context) error          { return nil }
+func (s *stubEngine) Name() string                               { return s.name }
+func (s *stubEngine) Endpoint() string                           { return "stub://" + s.name }
+func (s *stubEngine) Health(ctx context.Context) error           { return nil }
 func (s *stubEngine) List(ctx context.Context) ([]string, error) { return nil, nil }
 func (s *stubEngine) Pull(ctx context.Context, _ string, _ func(string, int64, int64)) error {
 	return nil

@@ -29,7 +29,7 @@ import (
 
 type embeddingRequest struct {
 	Model string          `json:"model"`
-	Input json.RawMessage `json:"input"`            // string or array of strings
+	Input json.RawMessage `json:"input"` // string or array of strings
 	User  string          `json:"user,omitempty"`
 }
 
