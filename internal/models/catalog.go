@@ -140,7 +140,13 @@ func resolveCatalogDir() string {
 	if exe, err := os.Executable(); err == nil {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "catalog"))
 	}
-	candidates = append(candidates, "/usr/local/share/flock/catalog")
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".flock", "catalog"))
+	}
+	candidates = append(candidates,
+		"/usr/local/share/flock/catalog",
+		"/usr/share/flock/catalog",
+	)
 	for _, c := range candidates {
 		if st, err := os.Stat(c); err == nil && st.IsDir() {
 			return c

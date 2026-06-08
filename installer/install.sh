@@ -282,6 +282,16 @@ install_binary() {
     chmod +x "$target" 2>/dev/null || sudo chmod +x "$target"
     ok "installed flock ${VERSION} to ${target}"
 
+    # Catalog: copy the bundled YAML files to ~/.flock/catalog so
+    # `flock up` and `flock model` work out of the box. resolveCatalogDir
+    # picks this path up automatically.
+    if [ -d "$TMPDIR/catalog" ]; then
+        catalog_dst="$HOME/.flock/catalog"
+        mkdir -p "$catalog_dst"
+        cp "$TMPDIR"/catalog/*.yaml "$catalog_dst/" 2>/dev/null || true
+        ok "catalog installed at $catalog_dst"
+    fi
+
     # PATH check
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) ;;
@@ -298,8 +308,9 @@ install_binary() {
 # ---- post-install guidance ----
 
 print_next_steps() {
-    cat <<EOF
-
+    # printf '%b' interprets the \033 sequences in $C_BOLD/$C_RESET. Using
+    # `cat <<EOF` would print them as literal "\033[1m" text on POSIX sh.
+    printf '%b' "
   ${C_BOLD}Next steps${C_RESET}
 
     1. Make sure Ollama is running:
@@ -325,7 +336,7 @@ print_next_steps() {
          flock join http://<leader-host>:8080?token=<TOKEN>
 
   Docs: https://github.com/${REPO}
-EOF
+"
 }
 
 # ---- main ----

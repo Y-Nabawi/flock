@@ -111,7 +111,7 @@ sudo rpm -i https://github.com/hadihonarvar/flock/releases/latest/download/flock
 
 (Replace `VERSION` with the latest from [Releases](https://github.com/hadihonarvar/flock/releases). The package version stays current via your distro's normal upgrade path — `flock update` also works as an in-place binary swap for non-package installs.)
 
-**Option B — install.sh** (works everywhere; drops binary in `~/.local/bin/`):
+**Option B — install.sh** (works everywhere; drops binary in `~/.local/bin/` and catalog in `~/.flock/catalog/`):
 
 ```bash
 # 1. install Flock
@@ -756,7 +756,7 @@ observability:
 | `FLOCK_REQUIRE_KEYS` | `auth.require_keys` (truthy `1/true/yes`) |
 | `FLOCK_DEFAULT_MODEL` | `router.default_model` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
-| `FLOCK_CATALOG_DIR` | `catalog_dir` |
+| `FLOCK_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$FLOCK_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.flock/catalog` (curl installer) → `/usr/local/share/flock/catalog` → `/usr/share/flock/catalog` (.deb/.rpm) |
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
 | `FLOCK_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader is on v0.5+. |

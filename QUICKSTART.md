@@ -460,8 +460,10 @@ Or via env: `FLOCK_ENGINE=vllm FLOCK_VLLM_ENDPOINT=http://gpu:8000 flock up`. Th
 **Want bare-metal speed on weak hardware?** Use `llama.cpp` directly — lower RAM and cold-start latency than Ollama, and Flock auto-launches `llama-server` for you so it's still one command:
 
 ```bash
-# 1. install llama.cpp (provides llama-server + rpc-server)
+# 1. install llama.cpp (provides llama-server)
 brew install llama.cpp     # macOS · apt: see https://github.com/ggml-org/llama.cpp
+# (rpc-server is not in the Homebrew bottle — only needed for sharded
+#  models; build from source with `cmake -DGGML_RPC=ON` if you need it)
 
 # 2. that's it — Flock spawns llama-server itself
 FLOCK_ENGINE=llamacpp FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
