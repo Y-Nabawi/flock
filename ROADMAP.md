@@ -1,6 +1,6 @@
 # Roadmap — multimodal + accessibility (v0.4 → v1.0)
 
-Last updated: 2026-06-07 · Current release: **v0.5.0** · See [TASKS.md](TASKS.md) for the per-task tracker.
+Last updated: 2026-06-07 · Current release: **v0.21.0** (auto-release bumps +0.1 per `feat:` commit) · See [TASKS.md](TASKS.md) for the per-task tracker.
 
 This file is the strategic plan. It groups everything into three buckets — **modalities that fit Flock's architecture**, **modalities that stretch it**, and the **eight accessibility bets** that turn open-source AI from "I can run a model" into "my team uses this in production."
 
