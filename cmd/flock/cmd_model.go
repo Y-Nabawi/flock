@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,8 @@ func cmdModel(args []string) {
 			"flock model search                # browse the full catalog",
 			"flock model search coder          # filter to coding models",
 			"flock model search vision         # filter by capability (vision, embedding, tools, …)",
+			"flock model search --sort=released         # newest models first",
+			"flock model search --since 2026-01-01      # only models released since",
 			"flock model info qwen-coder-14b   # full details: capabilities, hardware, fallback chain, install + use snippets",
 			"flock model add llama-3.2-3b      # install (auto-delegates if sharded)",
 			"flock model add llama-3.3-70b --force   # bypass the hardware floor check",
@@ -57,11 +60,8 @@ func cmdModel(args []string) {
 		}
 		modelRemove(args[1])
 	case "search":
-		query := ""
-		if len(args) > 1 {
-			query = args[1]
-		}
-		modelSearch(query)
+		query, sortReleased, since := parseModelSearchArgs(args[1:])
+		modelSearch(query, sortReleased, since)
 	case "info":
 		if len(args) < 2 {
 			die("usage: flock model info <id>")
@@ -237,7 +237,7 @@ func modelRemove(id string) {
 	ok(os.Stdout, "removed: %s", id)
 }
 
-func modelSearch(query string) {
+func modelSearch(query string, sortReleased bool, since string) {
 	cfg := loadConfigOrExit()
 	cat := loadCatalogOrExit(cfg)
 	q := strings.ToLower(query)
@@ -253,7 +253,7 @@ func modelSearch(query string) {
 		}
 	}
 
-	fmt.Printf("%-26s %-32s %7s %5s %-22s %s\n", "ID", "NAME", "SIZE", "RAM", "CAPABILITIES", "INSTALLED")
+	rows := make([]models.Entry, 0, len(cat))
 	for _, e := range cat {
 		if q != "" &&
 			!strings.Contains(strings.ToLower(e.ID), q) &&
@@ -262,6 +262,30 @@ func modelSearch(query string) {
 			!containsAny(e.Tags, q) {
 			continue
 		}
+		if since != "" && (e.Released == "" || e.Released < since) {
+			continue
+		}
+		rows = append(rows, e)
+	}
+	if sortReleased {
+		sort.SliceStable(rows, func(i, j int) bool {
+			// Newest first; entries without a date sink to the bottom.
+			a, b := rows[i].Released, rows[j].Released
+			if a == "" && b == "" {
+				return rows[i].SizeBytes < rows[j].SizeBytes
+			}
+			if a == "" {
+				return false
+			}
+			if b == "" {
+				return true
+			}
+			return a > b
+		})
+	}
+
+	fmt.Printf("%-26s %-32s %7s %5s %-22s %-10s %s\n", "ID", "NAME", "SIZE", "RAM", "CAPABILITIES", "RELEASED", "INSTALLED")
+	for _, e := range rows {
 		size := "?"
 		if e.SizeBytes > 0 {
 			size = fmt.Sprintf("%.1f GB", float64(e.SizeBytes)/1e9)
@@ -274,11 +298,47 @@ func modelSearch(query string) {
 		if installed[e.ID] {
 			mark = "✓"
 		}
-		fmt.Printf("%-26s %-32s %7s %4dG %-22s %s\n",
-			e.ID, truncStr(e.DisplayName, 32), size, e.Hardware.MinRAMGB, caps, mark)
+		released := e.Released
+		if released == "" {
+			released = "—"
+		}
+		fmt.Printf("%-26s %-32s %7s %4dG %-22s %-10s %s\n",
+			e.ID, truncStr(e.DisplayName, 32), size, e.Hardware.MinRAMGB, caps, released, mark)
 	}
 	fmt.Println()
 	fmt.Println("Tip: `flock model info <id>` for full details on one model. `flock model add <id>` to install.")
+}
+
+// parseModelSearchArgs extracts the query plus `--sort=released` and
+// `--since YYYY-MM-DD` flags. Flags and the free-form query may appear
+// in any order.
+func parseModelSearchArgs(args []string) (query string, sortReleased bool, since string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--sort=released" || a == "--sort-released":
+			sortReleased = true
+		case a == "--sort":
+			if i+1 < len(args) && args[i+1] == "released" {
+				sortReleased = true
+				i++
+			}
+		case strings.HasPrefix(a, "--since="):
+			since = strings.TrimPrefix(a, "--since=")
+		case a == "--since":
+			if i+1 < len(args) {
+				since = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "-"):
+			die("unknown flag: %s (run `flock model --help`)", a)
+		default:
+			if query == "" {
+				query = a
+			}
+		}
+	}
+	return
 }
 
 func containsAny(items []string, q string) bool {

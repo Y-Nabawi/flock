@@ -826,10 +826,14 @@ async function renderModels() {
     const installedSet = new Set((installed || []).map((m) => m.CatalogID));
     const installedRows = (installed || []).map((m) => {
       const c = byID[m.CatalogID] || {};
+      const released = c.released
+        ? `<span class="text-xs text-slate-600 font-mono">${c.released}</span>`
+        : `<span class="text-xs text-slate-400">—</span>`;
       return [
         `<span class="code">${m.CatalogID}</span>`,
         stateBadge(m.Status),
         licenseBadge(c.license, c.license_url),
+        released,
         `<span class="code">${m.Source}</span>`,
         m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
         new Date(m.InstalledAt).toLocaleString(),
@@ -838,11 +842,13 @@ async function renderModels() {
     });
     const catalogOptions = (catalog || [])
       .filter((c) => !installedSet.has(c.id))
+      .sort((a, b) => (b.released || "").localeCompare(a.released || ""))
       .map((c) => {
         const sz = c.size_bytes ? (c.size_bytes / 1e9).toFixed(1) + " GB" : "?";
         const sharded = c.sharding && c.sharding.required ? " (sharded)" : "";
         const lic = c.license ? ` · ${c.license}` : "";
-        return `<option value="${c.id}">${c.id} — ${c.display_name} · ${sz}${sharded}${lic}</option>`;
+        const rel = c.released ? ` · ${c.released}` : "";
+        return `<option value="${c.id}">${c.id} — ${c.display_name} · ${sz}${sharded}${lic}${rel}</option>`;
       }).join("");
 
     root.innerHTML = `
@@ -850,7 +856,7 @@ async function renderModels() {
         <h2 class="text-lg font-semibold">Installed models</h2>
         <p class="text-xs text-slate-500">License badge: <span class="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 rounded text-xs font-mono">permissive</span> · <span class="text-amber-700 bg-amber-50 border border-amber-200 px-1.5 rounded text-xs font-mono">check terms</span></p>
       </div>
-      ${table(["ID", "Status", "License", "Source", "Size", "Installed", ""], installedRows)}
+      ${table(["ID", "Status", "License", "Released", "Source", "Size", "Installed", ""], installedRows)}
 
       <div class="bg-white border border-slate-200 rounded p-4 mt-6">
         <div class="text-sm font-semibold mb-2">Add a model from the catalog</div>
