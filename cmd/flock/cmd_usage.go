@@ -12,6 +12,7 @@ import (
 //
 //	flock usage [--limit=N] [--user=X]
 func cmdUsage(args []string) {
+	args, asJSON := extractJSONFlag(args)
 	fs := flag.NewFlagSet("usage", flag.ExitOnError)
 	limit := fs.Int("limit", 50, "maximum number of rows to show")
 	user := fs.String("user", "", "filter to a specific user_id (client-side)")
@@ -19,12 +20,13 @@ func cmdUsage(args []string) {
 		showHelp(helpSpec{
 			name:    "usage",
 			summary: "show recent inference usage records",
-			usage:   "flock usage [--limit N] [--user X]",
+			usage:   "flock usage [--limit N] [--user X] [--json]",
 			flags:   fs,
 			examples: []string{
 				"flock usage                 # latest 50 records",
 				"flock usage --limit 200     # latest 200",
 				"flock usage --user alice    # filter by user",
+				"flock usage --json          # machine-readable",
 			},
 		})
 	}
@@ -40,18 +42,32 @@ func cmdUsage(args []string) {
 	}
 	var rows []map[string]any
 	_ = json.Unmarshal(body, &rows)
-	if len(rows) == 0 {
+
+	// Apply --user filter + --limit up-front so JSON and table modes
+	// both honor them.
+	filtered := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		if *user != "" && fmt.Sprint(r["UserID"]) != *user {
+			continue
+		}
+		filtered = append(filtered, r)
+		if len(filtered) >= *limit {
+			break
+		}
+	}
+
+	if asJSON {
+		emitJSON(filtered)
+		return
+	}
+	if len(filtered) == 0 {
 		fmt.Println("(no usage records yet)")
 		return
 	}
 
 	fmt.Printf("%-19s %-14s %-22s %-12s %5s %5s %7s %s\n",
 		"TIME", "USER/KEY", "MODEL", "PROTOCOL", "PROMPT", "COMPL", "MS", "OUTCOME")
-	count := 0
-	for _, r := range rows {
-		if *user != "" && fmt.Sprint(r["UserID"]) != *user {
-			continue
-		}
+	for _, r := range filtered {
 		ts := parseTime(r["TS"])
 		fmt.Printf("%-19s %-14s %-22s %-12s %5v %5v %7v %s\n",
 			ts.Format("2006-01-02 15:04:05"),
@@ -60,10 +76,6 @@ func cmdUsage(args []string) {
 			fmt.Sprint(r["Protocol"]),
 			r["PromptTokens"], r["CompletionTokens"], r["LatencyMS"],
 			r["Outcome"])
-		count++
-		if count >= *limit {
-			break
-		}
 	}
 }
 

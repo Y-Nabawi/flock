@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -42,4 +43,30 @@ func extractYesFlag(args []string) ([]string, bool) {
 		out = append(out, a)
 	}
 	return out, yes
+}
+
+// extractJSONFlag pulls --json out of args. Order-independent. Read
+// commands accept it to switch from a human-friendly table to a
+// machine-readable JSON dump on stdout.
+func extractJSONFlag(args []string) ([]string, bool) {
+	asJSON := false
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, asJSON
+}
+
+// emitJSON prints v as indented JSON to stdout, then exits the function.
+// Used by read commands when --json is set.
+func emitJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		fmt.Fprintln(os.Stderr, "encode json:", err)
+	}
 }

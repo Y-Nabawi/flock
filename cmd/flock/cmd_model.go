@@ -61,7 +61,8 @@ func cmdModel(args []string) {
 		}
 		modelAdd(id, force)
 	case "ls", "list":
-		modelLs()
+		_, asJSON := extractJSONFlag(args[1:])
+		modelLs(asJSON)
 	case "remove", "rm":
 		rest, yes := extractYesFlag(args[1:])
 		id := ""
@@ -79,12 +80,14 @@ func cmdModel(args []string) {
 		}
 		modelRemove(id)
 	case "search":
-		query, sortReleased, since := parseModelSearchArgs(args[1:])
-		modelSearch(query, sortReleased, since)
+		rest, asJSON := extractJSONFlag(args[1:])
+		query, sortReleased, since := parseModelSearchArgs(rest)
+		modelSearch(query, sortReleased, since, asJSON)
 	case "info":
+		rest, asJSON := extractJSONFlag(args[1:])
 		id := ""
-		if len(args) >= 2 {
-			id = args[1]
+		if len(rest) >= 1 {
+			id = rest[0]
 		}
 		if id == "" || !catalogHasID(id) {
 			id = pickCatalogID("Pick a model to inspect:", id)
@@ -92,7 +95,7 @@ func cmdModel(args []string) {
 				die("no model selected")
 			}
 		}
-		modelInfo(id)
+		modelInfo(id, asJSON)
 	default:
 		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
@@ -291,13 +294,9 @@ func modelAdd(id string, force bool) {
 		die("engine not reachable (%v) — start it first", err)
 	}
 	note(os.Stdout, "pulling %s (%s via %s) ...", entry.ID, engineName, eng.Name())
-	err := eng.Pull(context.Background(), engineName, func(status string, completed, total int64) {
-		if total > 0 {
-			pct := completed * 100 / total
-			fmt.Printf("\r  %s %d%%  ", status, pct)
-		}
-	})
-	fmt.Println()
+	bar := newProgressBar("pulling " + entry.ID)
+	err := eng.Pull(context.Background(), engineName, bar.update)
+	bar.done()
 	if err != nil {
 		die("pull failed: %v", err)
 	}
@@ -350,13 +349,20 @@ func engineNativeName(engine string, e *models.Entry) string {
 	return e.ID
 }
 
-func modelLs() {
+func modelLs(asJSON bool) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	ms, err := st.Models().List(context.Background())
 	if err != nil {
 		die("list models: %v", err)
+	}
+	if asJSON {
+		if ms == nil {
+			ms = []store.Model{}
+		}
+		emitJSON(ms)
+		return
 	}
 	if len(ms) == 0 {
 		fmt.Println("(no models installed — try `flock model add llama-3.2-3b`)")
@@ -394,7 +400,7 @@ func modelRemove(id string) {
 	ok(os.Stdout, "removed: %s", id)
 }
 
-func modelSearch(query string, sortReleased bool, since string) {
+func modelSearch(query string, sortReleased bool, since string, asJSON bool) {
 	cfg := loadConfigOrExit()
 	cat := loadCatalogOrExit(cfg)
 	q := strings.ToLower(query)
@@ -439,6 +445,21 @@ func modelSearch(query string, sortReleased bool, since string) {
 			}
 			return a > b
 		})
+	}
+
+	if asJSON {
+		// Decorate each entry with an `installed` field so scripts don't
+		// have to cross-reference a separate query.
+		type out struct {
+			models.Entry
+			Installed bool `json:"installed"`
+		}
+		decorated := make([]out, len(rows))
+		for i, e := range rows {
+			decorated[i] = out{Entry: e, Installed: installed[e.ID]}
+		}
+		emitJSON(decorated)
+		return
 	}
 
 	fmt.Printf("%-26s %-32s %7s %5s %-22s %-10s %s\n", "ID", "NAME", "SIZE", "RAM", "CAPABILITIES", "RELEASED", "INSTALLED")
@@ -510,12 +531,16 @@ func containsAny(items []string, q string) bool {
 // modelInfo prints the full metadata for a single catalog model + whether
 // it's installed locally + ready-to-paste usage snippets. Matches the kind
 // of info in MODELS.md but condensed for terminal display.
-func modelInfo(id string) {
+func modelInfo(id string, asJSON bool) {
 	cfg := loadConfigOrExit()
 	cat := loadCatalogOrExit(cfg)
 	entry := models.FindByID(cat, id)
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
+	}
+	if asJSON {
+		emitJSON(entry)
+		return
 	}
 
 	// Check installed state

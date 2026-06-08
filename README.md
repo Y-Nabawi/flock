@@ -463,7 +463,7 @@ Flock ships a curated catalog of **37 open-weight models** in `catalog/*.yaml`, 
 
 ⭐ = current top picks (June 2026).
 
-Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec.
+Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `flock model ls`, `flock status`, `flock usage`, and `flock audit` also accept `--json`. Running any `flock model add|info|remove` or `flock connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate).
 
 ### Proxied (paid APIs — shipped, works today)
 

@@ -71,6 +71,8 @@ curl -fsSL https://raw.githubusercontent.com/hadihonarvar/flock/main/installer/i
 FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up
 ```
 
+> First-run behavior: on an empty install, `flock up` shows a one-line prompt asking whether to pull the recommended starter for your hardware (press enter to accept, `o` to pick another, `n` to skip). Add `--no-wizard` for a quiet boot, or `--auto-pull=false` to skip the pull entirely.
+
 ## 🐧 Linux (x86_64 or arm64)
 
 ```bash

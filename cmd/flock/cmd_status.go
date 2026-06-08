@@ -13,12 +13,14 @@ func cmdStatus(args []string) {
 		showHelp(helpSpec{
 			name:    "status",
 			summary: "show local node + cluster status",
-			usage:   "flock status",
+			usage:   "flock status [--json]",
 			examples: []string{
 				"flock status",
+				"flock status --json   # machine-readable",
 			},
 		})
 	}
+	_, asJSON := extractJSONFlag(args)
 	cfg := loadConfigOrExit()
 	addr := cfg.Listen
 	if addr == "" {
@@ -28,30 +30,80 @@ func cmdStatus(args []string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
+	type engineStatus struct {
+		Name      string `json:"name"`
+		Endpoint  string `json:"endpoint"`
+		Reachable bool   `json:"reachable"`
+		Error     string `json:"error,omitempty"`
+	}
+	type statusOut struct {
+		ControlPlane struct {
+			URL       string `json:"url"`
+			Reachable bool   `json:"reachable"`
+			Status    string `json:"status,omitempty"`
+			Error     string `json:"error,omitempty"`
+		} `json:"control_plane"`
+		Engine engineStatus `json:"engine"`
+		Models []struct {
+			CatalogID string `json:"id"`
+			Status    string `json:"status"`
+			Source    string `json:"source"`
+		} `json:"models"`
+	}
+	var out statusOut
+	out.ControlPlane.URL = url
+	out.Models = []struct {
+		CatalogID string `json:"id"`
+		Status    string `json:"status"`
+		Source    string `json:"source"`
+	}{}
+
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		out.ControlPlane.Error = err.Error()
+		if asJSON {
+			emitJSON(out)
+			os.Exit(1)
+		}
 		warn(os.Stdout, "control plane not reachable at %s: %v", url, err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
-	ok(os.Stdout, "control plane: %s (%s)", resp.Status, url)
+	out.ControlPlane.Reachable = true
+	out.ControlPlane.Status = resp.Status
 
-	// engine
 	eng := newEngineFromConfig(cfg)
+	out.Engine.Name = eng.Name()
+	out.Engine.Endpoint = eng.Endpoint()
 	if err := eng.Health(ctx); err != nil {
-		warn(os.Stdout, "engine: not reachable: %v", err)
+		out.Engine.Error = err.Error()
 	} else {
-		ok(os.Stdout, "engine: %s ok at %s", eng.Name(), eng.Endpoint())
+		out.Engine.Reachable = true
 	}
 
-	// installed models
 	st := openStoreOrExit(cfg)
 	defer st.Close()
-	ms, err := st.Models().List(context.Background())
-	if err != nil {
-		warn(os.Stdout, "could not list installed models: %v", err)
+	ms, _ := st.Models().List(context.Background())
+	for _, m := range ms {
+		out.Models = append(out.Models, struct {
+			CatalogID string `json:"id"`
+			Status    string `json:"status"`
+			Source    string `json:"source"`
+		}{m.CatalogID, m.Status, m.Source})
+	}
+
+	if asJSON {
+		emitJSON(out)
 		return
+	}
+
+	ok(os.Stdout, "control plane: %s (%s)", resp.Status, url)
+	if out.Engine.Reachable {
+		ok(os.Stdout, "engine: %s ok at %s", eng.Name(), eng.Endpoint())
+	} else {
+		warn(os.Stdout, "engine: not reachable: %s", out.Engine.Error)
 	}
 	if len(ms) == 0 {
 		note(os.Stdout, "no models installed yet — try `flock model add llama-3.2-3b`")

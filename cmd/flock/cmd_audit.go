@@ -11,6 +11,7 @@ import (
 //
 //	flock audit [--limit=N] [--actor=X]
 func cmdAudit(args []string) {
+	args, asJSON := extractJSONFlag(args)
 	fs := flag.NewFlagSet("audit", flag.ExitOnError)
 	limit := fs.Int("limit", 50, "maximum rows to show")
 	actor := fs.String("actor", "", "filter by actor name (client-side)")
@@ -18,12 +19,13 @@ func cmdAudit(args []string) {
 		showHelp(helpSpec{
 			name:    "audit",
 			summary: "show recent admin audit log entries",
-			usage:   "flock audit [--limit N] [--actor X]",
+			usage:   "flock audit [--limit N] [--actor X] [--json]",
 			flags:   fs,
 			examples: []string{
 				"flock audit                       # latest 50 entries",
 				"flock audit --limit 500",
 				"flock audit --actor admin",
+				"flock audit --json                # machine-readable",
 			},
 		})
 	}
@@ -39,26 +41,34 @@ func cmdAudit(args []string) {
 	}
 	var rows []map[string]any
 	_ = json.Unmarshal(body, &rows)
-	if len(rows) == 0 {
+
+	filtered := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		if *actor != "" && fmt.Sprint(r["Actor"]) != *actor {
+			continue
+		}
+		filtered = append(filtered, r)
+		if len(filtered) >= *limit {
+			break
+		}
+	}
+
+	if asJSON {
+		emitJSON(filtered)
+		return
+	}
+	if len(filtered) == 0 {
 		fmt.Println("(no audit records yet)")
 		return
 	}
 
 	fmt.Printf("%-19s %-16s %-40s %s\n", "TIME", "ACTOR", "ACTION", "TARGET")
-	count := 0
-	for _, r := range rows {
-		if *actor != "" && fmt.Sprint(r["Actor"]) != *actor {
-			continue
-		}
+	for _, r := range filtered {
 		ts := parseTime(r["TS"])
 		fmt.Printf("%-19s %-16s %-40s %s\n",
 			ts.Format("2006-01-02 15:04:05"),
 			truncStr(fmt.Sprint(r["Actor"]), 16),
 			truncStr(fmt.Sprint(r["Action"]), 40),
 			fmt.Sprint(r["Target"]))
-		count++
-		if count >= *limit {
-			break
-		}
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -9,8 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mattn/go-isatty"
 
 	"github.com/hadihonarvar/flock/internal/agent"
 	"github.com/hadihonarvar/flock/internal/auth"
@@ -26,11 +30,12 @@ func cmdUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	configPath := fs.String("config", "", "path to config.yaml (default: ~/.flock/config.yaml)")
 	autoPull := fs.Bool("auto-pull", true, "auto-pull the default model on first run")
+	noWizard := fs.Bool("no-wizard", false, "skip the interactive first-run prompt; combine with --auto-pull=false for a fully quiet boot")
 	fs.Usage = func() {
 		showHelp(helpSpec{
 			name:    "up",
 			summary: "start the local node (becomes the cluster leader on first run)",
-			usage:   "flock up [--config <path>] [--auto-pull=false]",
+			usage:   "flock up [--config <path>] [--auto-pull=false] [--no-wizard]",
 			flags:   fs,
 			examples: []string{
 				"flock up",
@@ -38,6 +43,7 @@ func cmdUp(args []string) {
 				"FLOCK_ENGINE=llamacpp flock up           # auto-spawns llama-server if not already running",
 				"flock up --config ~/.flock/staging.yaml",
 				"flock up --auto-pull=false              # don't pre-pull the default model",
+				"flock up --no-wizard                    # skip the interactive 'install a starter?' prompt",
 			},
 			notes: []string{
 				"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
@@ -164,7 +170,12 @@ func cmdUp(args []string) {
 	} else {
 		ok(os.Stdout, "engine: %s at %s", eng.Name(), eng.Endpoint())
 		if *autoPull && cfg.Router.DefaultModel != "" {
-			ensureDefaultModel(cfg, cat, st, eng)
+			if !*noWizard && firstRunWizard(cfg, cat, st, eng, caps) {
+				// Wizard handled the install (or the user declined). Either
+				// way, skip the silent auto-pull below so we don't double up.
+			} else {
+				ensureDefaultModel(cfg, cat, st, eng)
+			}
 		}
 	}
 
@@ -248,13 +259,9 @@ func ensureDefaultModel(cfg *config.Config, cat []models.Entry, st store.Store, 
 		}
 	}
 	note(os.Stdout, "pulling %s ...", engineModelName)
-	err := eng.Pull(context.Background(), engineModelName, func(status string, completed, total int64) {
-		if total > 0 {
-			pct := completed * 100 / total
-			fmt.Printf("\r  %s %d%%  ", status, pct)
-		}
-	})
-	fmt.Println()
+	bar := newProgressBar("pulling " + entry.ID)
+	err := eng.Pull(context.Background(), engineModelName, bar.update)
+	bar.done()
 	if err != nil {
 		warn(os.Stdout, "pull failed: %v", err)
 		return
@@ -383,6 +390,63 @@ func parseEndpointPort(endpoint string) int {
 		}
 	}
 	return 0
+}
+
+// firstRunWizard prompts the user whether to install the auto-picked
+// starter model on first boot. Returns true if the wizard ran (handled
+// the install OR the user explicitly declined); false to signal the
+// caller should fall through to the silent `ensureDefaultModel` path.
+//
+// Triggers only when stdin is interactive AND no models are installed
+// yet. Otherwise it's a no-op so scripted/CI uses get the existing
+// silent auto-pull behavior.
+func firstRunWizard(cfg *config.Config, cat []models.Entry, st store.Store, eng engines.Engine, caps agent.Capabilities) bool {
+	// Non-interactive context (CI, piped stdin) — skip and let the
+	// silent path run.
+	if !isInteractiveStdin() {
+		return false
+	}
+	// Anything already installed → not a first run.
+	if ms, err := st.Models().List(context.Background()); err == nil && len(ms) > 0 {
+		return false
+	}
+	pick := models.FindByID(cat, cfg.Router.DefaultModel)
+	if pick == nil {
+		return false
+	}
+	bold, dim, reset := "\033[1m", "\033[2m", "\033[0m"
+	if os.Getenv("NO_COLOR") != "" {
+		bold, dim, reset = "", "", ""
+	}
+	fmt.Println()
+	fmt.Printf("  %sFirst run.%s Pick a starter model to install — chat works as soon as it's done.\n", bold, reset)
+	fmt.Printf("  %sRecommended for your hardware (%d GB RAM):%s %s — %s %s(%.1f GB)%s\n",
+		dim, caps.RAMGB, reset, pick.ID, pick.DisplayName, dim, float64(pick.SizeBytes)/1e9, reset)
+	fmt.Printf("  Install %s now? [%sY%s/n/o=pick another] ", pick.ID, bold, reset)
+	r := bufio.NewReader(os.Stdin)
+	line, _ := r.ReadString('\n')
+	ans := strings.ToLower(strings.TrimSpace(line))
+	switch ans {
+	case "n", "no":
+		note(os.Stdout, "skipped — install later with `flock model add <id>`")
+		return true
+	case "o", "other", "pick", "p":
+		chosen := pickCatalogID("Pick a model to install:", "")
+		if chosen == "" {
+			note(os.Stdout, "skipped — install later with `flock model add <id>`")
+			return true
+		}
+		cfg.Router.DefaultModel = chosen
+	}
+	ensureDefaultModel(cfg, cat, st, eng)
+	return true
+}
+
+// isInteractiveStdin reports whether stdin is wired up to a real TTY.
+// Used to gate interactive prompts so scripts don't hang waiting for
+// input that will never come.
+func isInteractiveStdin() bool {
+	return isatty.IsTerminal(os.Stdin.Fd())
 }
 
 // engineStartHint returns the copy-pasteable command that brings the
