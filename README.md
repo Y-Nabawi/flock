@@ -469,6 +469,8 @@ The dashboard at `http://localhost:8080` mirrors the CLI: persistent top-bar chi
 
 The same aggregates are available from the CLI: `flock usage --summary` and `flock audit --summary` print the top-models / p50-p95-p99 / error-rate / sparkline view that the dashboard renders. Both also accept `--json`.
 
+Engine reliability: when Flock auto-spawned the engine itself (`flock up` with `FLOCK_ENGINE=llamacpp`), a health watchdog polls every 30 s and force-restarts the process after three consecutive failures — so a hung `llama-server` no longer requires manual intervention. For user-managed engines (Ollama, vLLM) Flock leaves the process alone but `/v1/chat/completions` now returns a typed `engine_unreachable` error with the engine name, endpoint, and the exact command to start it (`ollama serve`, `mlx_lm.server …`, etc.) when the engine isn't responding.
+
 ### Proxied (paid APIs — shipped, works today)
 
 When a request's model name matches one of these, Flock proxies to the upstream vendor with **your** API key (env-configured) and logs the call as usage like any other request:

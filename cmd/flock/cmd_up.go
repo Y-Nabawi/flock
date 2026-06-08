@@ -112,9 +112,8 @@ func cmdUp(args []string) {
 			port := parseEndpointPort(cfg.Engine.LlamaCppEndpoint)
 			spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			note(os.Stdout, "auto-spawning llama-server for %s on :%d ...", entry.ID, port)
-			_, err := scheduler.EnsureLlamaServer(spawnCtx, sup, log, scheduler.LlamaCppLaunchSpec{
-				Entry: entry, Port: port,
-			})
+			spec := scheduler.LlamaCppLaunchSpec{Entry: entry, Port: port}
+			_, err := scheduler.EnsureLlamaServer(spawnCtx, sup, log, spec)
 			spawnCancel()
 			if err != nil {
 				warn(os.Stdout, "auto-spawn failed: %v", err)
@@ -124,6 +123,11 @@ func cmdUp(args []string) {
 				reprobeCancel()
 				if engineOK {
 					ok(os.Stdout, "llama-server ready (auto-spawned)")
+					// Spawned engines get a health watchdog that force-
+					// restarts the process if it ever becomes unresponsive
+					// (the supervisor's crash-restart only covers actual
+					// process exit; this also covers hung llama-server).
+					scheduler.StartHealthWatchdog(context.Background(), sup, log, eng, spec)
 				}
 			}
 		}

@@ -168,7 +168,8 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	stream, err := h.Engine.Chat(r.Context(), engineReq)
 	if err != nil {
 		recordUsage(r.Context(), h.Store, "openai", requested, nil, time.Since(start), "error")
-		writeJSONError(w, http.StatusBadGateway, "upstream_error", err.Error())
+		code, msg := classifyEngineError(h.Engine, err)
+		writeJSONError(w, http.StatusBadGateway, code, msg)
 		return
 	}
 
@@ -214,7 +215,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request,
 		}
 		if ev.Err != nil {
 			recordUsage(r.Context(), h.Store, "openai", modelOut, nil, time.Since(start), "error")
-			writeSSEError(w, flusher, ev.Err)
+			writeSSEError(w, flusher, h.Engine, ev.Err)
 			return
 		}
 		if ev.Done {
@@ -430,8 +431,9 @@ func sendChunk(w http.ResponseWriter, flusher http.Flusher, c chatChunk) {
 	}
 }
 
-func writeSSEError(w http.ResponseWriter, flusher http.Flusher, err error) {
-	body := map[string]any{"error": map[string]any{"type": "upstream_error", "message": err.Error()}}
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, eng engines.Engine, err error) {
+	code, msg := classifyEngineError(eng, err)
+	body := map[string]any{"error": map[string]any{"type": code, "message": msg}}
 	b, _ := json.Marshal(body)
 	_, _ = io.WriteString(w, "data: ")
 	_, _ = w.Write(b)
@@ -440,6 +442,44 @@ func writeSSEError(w http.ResponseWriter, flusher http.Flusher, err error) {
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+// classifyEngineError inspects the engine error and returns a typed
+// code + an actionable message. Connection-refused / timeout / no-such-
+// host all collapse to "engine_unreachable" with the engine name + URL
+// + start-hint so the API consumer (and their UI) can show something
+// better than "engine error: dial tcp …".
+func classifyEngineError(eng engines.Engine, err error) (code, msg string) {
+	s := strings.ToLower(err.Error())
+	unreachable := strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "no such host") ||
+		strings.Contains(s, "i/o timeout") ||
+		strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "connect: ") ||
+		strings.Contains(s, "eof")
+	if !unreachable {
+		return "upstream_error", err.Error()
+	}
+	hint := engineRestartHint(eng.Name())
+	return "engine_unreachable", fmt.Sprintf("%s at %s is not reachable (%v). %s",
+		eng.Name(), eng.Endpoint(), err, hint)
+}
+
+// engineRestartHint mirrors cmd/flock's engineStartHint. Duplicated here
+// to keep the API package free of CLI dependencies; if a third caller
+// shows up we can move both to internal/engines.
+func engineRestartHint(name string) string {
+	switch name {
+	case "ollama":
+		return "Start it with: `ollama serve`."
+	case "vllm":
+		return "Start vLLM (see https://docs.vllm.ai/) and ensure FLOCK_VLLM_ENDPOINT matches."
+	case "mlx", "mlx-lm":
+		return "Start MLX-LM: `mlx_lm.server --port 8080`."
+	case "llamacpp", "llama-cpp", "llamacpp-rpc":
+		return "Start llama.cpp: `llama-server -m /path/to/model.gguf --port 8089` (Flock auto-spawns it on `flock up` for catalog entries with source.repo)."
+	}
+	return "Check the engine endpoint in `~/.flock/config.yaml` and confirm it is listening."
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -40,6 +40,76 @@ func LlamaCppProcessID(entryID string) string {
 	return "llamacpp-" + safeID(entryID)
 }
 
+// StartHealthWatchdog launches a goroutine that periodically probes the
+// engine and force-restarts the spawned llama-server process on
+// consecutive failures. The Supervisor already handles "process crashed"
+// via Restart=true; this covers the harder case where the process is
+// still running but unresponsive (hung GGUF load, deadlocked endpoint,
+// etc.). Stops when ctx is cancelled.
+//
+// Tunables are conservative on purpose: a momentary blip during model
+// load shouldn't trigger a restart, and the restart itself should not
+// itself become a flap source.
+func StartHealthWatchdog(ctx context.Context, sup *agent.Supervisor, log *slog.Logger, eng engineHealthchecker, spec LlamaCppLaunchSpec) {
+	go func() {
+		const (
+			probeInterval     = 30 * time.Second
+			probeTimeout      = 5 * time.Second
+			failuresToRestart = 3
+		)
+		consecutive := 0
+		ticker := time.NewTicker(probeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			hctx, cancel := context.WithTimeout(ctx, probeTimeout)
+			err := eng.Health(hctx)
+			cancel()
+			if err == nil {
+				if consecutive > 0 {
+					log.Info("engine recovered", "engine", eng.Name())
+				}
+				consecutive = 0
+				continue
+			}
+			consecutive++
+			log.Warn("engine health failed",
+				"engine", eng.Name(),
+				"consecutive_failures", consecutive,
+				"err", err.Error())
+			if consecutive < failuresToRestart {
+				continue
+			}
+			procID := LlamaCppProcessID(spec.Entry.ID)
+			log.Warn("restarting unresponsive engine via watchdog",
+				"engine", eng.Name(),
+				"proc_id", procID)
+			_ = sup.Stop(procID)
+			// Give the supervisor a moment to clean up before we re-spawn.
+			time.Sleep(2 * time.Second)
+			if _, rerr := EnsureLlamaServer(ctx, sup, log, spec); rerr != nil {
+				log.Error("watchdog restart failed", "err", rerr.Error())
+				// Don't reset the counter — next tick will try again.
+				continue
+			}
+			log.Info("engine restarted by watchdog", "engine", eng.Name())
+			consecutive = 0
+		}
+	}()
+}
+
+// engineHealthchecker is the minimal surface the watchdog needs from the
+// engines package. Defined here so the scheduler doesn't pull in the
+// full engines.Engine interface for what is essentially Health() + Name().
+type engineHealthchecker interface {
+	Health(context.Context) error
+	Name() string
+}
+
 // EnsureLlamaServer launches a llama-server for spec.Entry via sup and
 // waits for the port to accept TCP. Idempotent: if the supervisor already
 // has a process under the same id, returns its existing ProcessInfo.
