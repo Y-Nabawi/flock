@@ -240,6 +240,11 @@ func (s *Server) routes() http.Handler {
 			// Config (read-only sanitized view)
 			r.Get("/config", s.getConfig)
 
+			// Compact status used by the dashboard top-bar chips. Same
+			// data the `flock status` CLI surfaces, returned as one JSON
+			// blob so the UI can poll a single endpoint.
+			r.Get("/status", s.statusSummary)
+
 			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
 			r.Get("/connect/clients", s.listConnectClients)
 			r.Post("/connect/snippet", s.renderConnectSnippet)
@@ -322,6 +327,42 @@ func peekModel(body []byte) string {
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprint(w, "ok")
+}
+
+// statusSummary returns the compact status payload used by the dashboard
+// top-bar chips and `flock status --json`. Single round-trip lookup so
+// polling stays cheap.
+func (s *Server) statusSummary(w http.ResponseWriter, r *http.Request) {
+	type engineStatus struct {
+		Name      string `json:"name"`
+		Endpoint  string `json:"endpoint"`
+		Reachable bool   `json:"reachable"`
+		Error     string `json:"error,omitempty"`
+	}
+	out := struct {
+		Role            string       `json:"role"`
+		Engine          engineStatus `json:"engine"`
+		Nodes           int          `json:"nodes"`
+		ModelsInstalled int          `json:"models_installed"`
+	}{
+		Role: "leader",
+		Engine: engineStatus{
+			Name:     s.engine.Name(),
+			Endpoint: s.engine.Endpoint(),
+		},
+	}
+	if err := s.engine.Health(r.Context()); err != nil {
+		out.Engine.Error = err.Error()
+	} else {
+		out.Engine.Reachable = true
+	}
+	if nodes, err := s.store.Nodes().List(r.Context()); err == nil {
+		out.Nodes = len(nodes)
+	}
+	if ms, err := s.store.Models().List(r.Context()); err == nil {
+		out.ModelsInstalled = len(ms)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {

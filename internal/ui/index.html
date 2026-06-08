@@ -29,7 +29,10 @@
           <div class="text-xl font-bold tracking-tight">Flock</div>
           <div class="text-xs text-slate-400">orchestrate open LLMs · your hardware</div>
         </div>
-        <div id="keyStatus" class="text-xs"></div>
+        <div class="flex items-center gap-3">
+          <div id="topChips" class="flex items-center gap-2 text-xs"></div>
+          <div id="keyStatus" class="text-xs"></div>
+        </div>
       </div>
       <nav class="max-w-6xl mx-auto px-6 flex gap-1 text-sm">
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="dashboard">Dashboard</button>
@@ -112,7 +115,66 @@ function showApp() {
   $("#login").classList.add("hidden");
   $("#content").classList.remove("hidden");
   renderKeyStatus();
+  renderTopChips();
+  setInterval(renderTopChips, 5000);
   switchView(currentView);
+}
+
+// renderTopChips draws the persistent role + engine reachability chips
+// that sit in the header. Polled every 5 s so a worker losing its engine
+// shows up in the header without a page reload.
+async function renderTopChips() {
+  try {
+    const s = await api("/admin/v1/status");
+    const role = s.role || "leader";
+    const eng = s.engine || {};
+    const engClass = eng.reachable ? "pill pill-ok" : "pill pill-err";
+    const engLabel = `${eng.name || "engine"} ${eng.reachable ? "ok" : "down"}`;
+    const nodesLabel = `${s.nodes || 0} ${s.nodes === 1 ? "node" : "nodes"}`;
+    const modelsLabel = `${s.models_installed || 0} models`;
+    $("#topChips").innerHTML = `
+      <span class="pill pill-info">${role}</span>
+      <span class="${engClass}" title="${eng.endpoint || ""}">${engLabel}</span>
+      <span class="pill pill-info">${nodesLabel}</span>
+      <span class="pill pill-info">${modelsLabel}</span>
+    `;
+  } catch (e) {
+    // Silent — chips are informational, not critical.
+  }
+}
+
+// Lightweight per-view polling. Each tab can opt-in by registering its
+// refresher; switchView clears the previous handle so we never overlap.
+let viewPoll = null;
+function startPolling(intervalMs, refresher) {
+  if (viewPoll) clearInterval(viewPoll);
+  viewPoll = setInterval(() => {
+    // Only poll while the document is visible; otherwise we'd hammer
+    // the admin API for tabs the user can't see.
+    if (document.visibilityState === "visible") refresher();
+  }, intervalMs);
+}
+function stopPolling() {
+  if (viewPoll) clearInterval(viewPoll);
+  viewPoll = null;
+}
+
+// Toast pattern (replaces alert/inline-error sprawl). Stack at
+// bottom-right, auto-dismiss after 3 s.
+function toast(message, kind = "info") {
+  let host = $("#toastHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toastHost";
+    host.className = "fixed bottom-4 right-4 flex flex-col gap-2 z-50";
+    document.body.appendChild(host);
+  }
+  const color = kind === "ok" ? "bg-emerald-600" : kind === "err" ? "bg-red-600" : "bg-slate-800";
+  const el = document.createElement("div");
+  el.className = `${color} text-white text-sm px-4 py-2 rounded shadow-lg`;
+  el.textContent = message;
+  host.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
 }
 function renderKeyStatus() {
   const masked = API_KEY ? API_KEY.slice(0, 9) + "…" : "no key";
@@ -137,6 +199,7 @@ $("#loginBtn").onclick = async () => {
 
 function switchView(v) {
   currentView = v;
+  stopPolling();
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === v));
   $$(".view").forEach((d) => d.classList.add("hidden"));
   $("#view-" + v).classList.remove("hidden");
@@ -584,10 +647,14 @@ function pgClear() {
 }
 
 async function renderNodes() {
+  startPolling(5000, renderNodes);
   const root = $("#view-nodes");
-  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  if (!root.dataset.loaded) {
+    root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  }
   try {
     const nodes = (await api("/admin/v1/nodes")) || [];
+    root.dataset.loaded = "1";
     const rows = nodes.map((n) => [
       `<span class="code">${n.ID}</span>`,
       n.Hostname,
@@ -614,9 +681,10 @@ async function drainNode(id) {
   if (!confirm(`Mark ${id} as draining? Existing requests will finish; no new requests will route to it.`)) return;
   try {
     await api(`/admin/v1/nodes/${encodeURIComponent(id)}/drain`, { method: "POST" });
+    toast(`Draining ${id}`, "ok");
     await renderNodes();
   } catch (e) {
-    alert("Drain failed: " + e.message);
+    toast(`Drain failed: ${e.message}`, "err");
   }
 }
 
@@ -624,9 +692,10 @@ async function removeNode(id) {
   if (!confirm(`Permanently remove ${id} from the cluster? The worker will keep running but the leader will forget it.`)) return;
   try {
     await api(`/admin/v1/nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast(`Removed ${id}`, "ok");
     await renderNodes();
   } catch (e) {
-    alert("Remove failed: " + e.message);
+    toast(`Remove failed: ${e.message}`, "err");
   }
 }
 
@@ -638,15 +707,63 @@ async function addNodeWizard() {
       method: "POST",
       body: JSON.stringify({ name, scope: "node" }),
     });
-    const cmd = `curl -fsSL ${location.origin}/install.sh | sh -s -- join ${location.origin}?token=${resp.plaintext}`;
-    showOneTimeModal(
-      "Worker join command",
-      `Run this on the new machine. The token is shown once and cannot be retrieved later.`,
-      cmd
-    );
+    showJoinHelperModal(location.origin, resp.plaintext);
   } catch (e) {
-    alert("Could not create join token: " + e.message);
+    toast(`Could not create join token: ${e.message}`, "err");
   }
+}
+
+// showJoinHelperModal lays out the worker onboarding flow: leader URL,
+// token (shown once), and two copy-pasteable snippets — one for fresh
+// machines (curl | sh) and one for boxes that already have the binary.
+function showJoinHelperModal(baseURL, token) {
+  const joinURL = `${baseURL}?token=${token}`;
+  const installAndJoin = `curl -fsSL ${baseURL}/install.sh | sh -s -- join '${joinURL}'`;
+  const justJoin = `flock join '${joinURL}'`;
+  const div = document.createElement("div");
+  div.className = "fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6";
+  div.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6">
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="text-lg font-semibold">Add a worker</div>
+          <div class="text-sm text-slate-600 mt-1">Token is shown <strong>once</strong> — copy what you need before closing this dialog.</div>
+        </div>
+        <button class="text-slate-400 hover:text-slate-700" onclick="this.closest('.fixed').remove()">✕</button>
+      </div>
+
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div>
+          <div class="text-xs text-slate-500 uppercase tracking-wide">Leader URL</div>
+          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${baseURL}</div>
+        </div>
+        <div>
+          <div class="text-xs text-slate-500 uppercase tracking-wide">Worker token (scope=node)</div>
+          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${token}</div>
+        </div>
+      </div>
+
+      <div class="mt-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wide">Option 1 · Fresh machine (no flock yet)</div>
+        <div class="flex items-start gap-2 mt-1">
+          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${installAndJoin}</pre>
+          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText(${JSON.stringify(installAndJoin)}); toast('Copied install-and-join', 'ok')">Copy</button>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <div class="text-xs text-slate-500 uppercase tracking-wide">Option 2 · Flock already installed</div>
+        <div class="flex items-start gap-2 mt-1">
+          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${justJoin}</pre>
+          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText(${JSON.stringify(justJoin)}); toast('Copied join command', 'ok')">Copy</button>
+        </div>
+      </div>
+
+      <div class="mt-5 flex justify-end">
+        <button class="text-sm bg-slate-900 text-white px-4 py-1 rounded" onclick="this.closest('.fixed').remove()">Done</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
 }
 
 function showOneTimeModal(title, blurb, content) {
@@ -804,8 +921,11 @@ function copyVal(id, btn) {
 }
 
 async function renderModels() {
+  startPolling(5000, renderModels);
   const root = $("#view-models");
-  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  if (!root.dataset.loaded) {
+    root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  }
   try {
     const [installed, catalog] = await Promise.all([
       api("/admin/v1/models"),
@@ -840,17 +960,6 @@ async function renderModels() {
         `<button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>`,
       ];
     });
-    const catalogOptions = (catalog || [])
-      .filter((c) => !installedSet.has(c.id))
-      .sort((a, b) => (b.released || "").localeCompare(a.released || ""))
-      .map((c) => {
-        const sz = c.size_bytes ? (c.size_bytes / 1e9).toFixed(1) + " GB" : "?";
-        const sharded = c.sharding && c.sharding.required ? " (sharded)" : "";
-        const lic = c.license ? ` · ${c.license}` : "";
-        const rel = c.released ? ` · ${c.released}` : "";
-        return `<option value="${c.id}">${c.id} — ${c.display_name} · ${sz}${sharded}${lic}${rel}</option>`;
-      }).join("");
-
     root.innerHTML = `
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-semibold">Installed models</h2>
@@ -858,45 +967,92 @@ async function renderModels() {
       </div>
       ${table(["ID", "Status", "License", "Released", "Source", "Size", "Installed", ""], installedRows)}
 
-      <div class="bg-white border border-slate-200 rounded p-4 mt-6">
-        <div class="text-sm font-semibold mb-2">Add a model from the catalog</div>
-        <div class="flex gap-2 items-end flex-wrap">
-          <div class="flex-1 min-w-[260px]">
-            <label class="text-xs text-slate-500">Catalog entry</label>
-            <select id="addModelSelect" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">
-              <option value="">— pick a model —</option>
-              ${catalogOptions}
-            </select>
-          </div>
-          <button id="addModelBtn" onclick="addModel()" class="bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-medium">Install</button>
+      <div class="bg-white border border-slate-200 rounded mt-6">
+        <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+          <div class="text-sm font-semibold">Catalog browser</div>
+          <input id="catFilter" type="text" placeholder="filter by id / name / capability / tag…" class="flex-1 min-w-[200px] border border-slate-300 rounded px-2 py-1 text-sm" oninput="renderCatalogTable()" />
+          <select id="catSort" class="border border-slate-300 rounded px-2 py-1 text-sm" onchange="renderCatalogTable()">
+            <option value="size">sort: size</option>
+            <option value="released">sort: newest</option>
+            <option value="id">sort: id</option>
+          </select>
+          <label class="text-xs text-slate-500 flex items-center gap-1">
+            <input id="catHideInstalled" type="checkbox" onchange="renderCatalogTable()" /> hide installed
+          </label>
         </div>
-        <p class="text-xs text-slate-500 mt-2">Pulls the weights via the configured engine. Sharded models delegate to the shard orchestrator automatically.</p>
-        <p id="addModelMsg" class="hidden mt-2 text-sm"></p>
+        <div id="catalogTableHost" class="overflow-auto"></div>
       </div>`;
+
+    window.__catalogCache = catalog || [];
+    window.__installedSet = installedSet;
+    renderCatalogTable();
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
 }
 
-async function addModel() {
-  const sel = $("#addModelSelect");
-  const id = sel.value;
-  if (!id) return;
-  const btn = $("#addModelBtn");
-  const msg = $("#addModelMsg");
+// renderCatalogTable redraws just the catalog body (header stays put)
+// so filtering / sorting feels instant. Reads from the cached catalog
+// fetched in renderModels.
+function renderCatalogTable() {
+  const host = $("#catalogTableHost");
+  if (!host) return;
+  const q = ($("#catFilter")?.value || "").toLowerCase();
+  const sort = $("#catSort")?.value || "size";
+  const hideInstalled = $("#catHideInstalled")?.checked;
+  const installedSet = window.__installedSet || new Set();
+  let rows = (window.__catalogCache || []).filter((c) => {
+    if (hideInstalled && installedSet.has(c.id)) return false;
+    if (!q) return true;
+    const hay = (c.id + " " + (c.display_name || "") + " " + (c.capabilities || []).join(",") + " " + (c.tags || []).join(",") + " " + (c.license || "")).toLowerCase();
+    return hay.includes(q);
+  });
+  rows.sort((a, b) => {
+    if (sort === "released") return (b.released || "").localeCompare(a.released || "");
+    if (sort === "id") return a.id.localeCompare(b.id);
+    return (a.size_bytes || 0) - (b.size_bytes || 0);
+  });
+  const licClass = (lic) => {
+    if (!lic) return "text-slate-400";
+    return /^(apache-2\.0|mit|bsd|lfm-open)$/i.test(lic)
+      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+      : "text-amber-700 bg-amber-50 border-amber-200";
+  };
+  host.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>ID</th><th>Name</th><th>Size</th><th>RAM</th>
+        <th>Capabilities</th><th>License</th><th>Released</th><th></th>
+      </tr></thead>
+      <tbody>${rows.length ? rows.map((c) => {
+        const sz = c.size_bytes ? (c.size_bytes / 1e9).toFixed(1) + " GB" : "?";
+        const installed = installedSet.has(c.id);
+        const action = installed
+          ? `<span class="pill pill-ok">installed</span>`
+          : `<button class="text-xs bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-800" onclick="addModelFromBrowser('${c.id}', this)">Install</button>`;
+        return `<tr>
+          <td><span class="code">${c.id}</span></td>
+          <td class="text-xs">${c.display_name || ""}</td>
+          <td class="text-xs">${sz}</td>
+          <td class="text-xs">${(c.hardware && c.hardware.min_ram_gb) || ""} GB</td>
+          <td class="text-xs">${(c.capabilities || []).join(", ")}</td>
+          <td><span class="text-xs font-mono border px-1.5 py-0.5 rounded ${licClass(c.license)}">${c.license || "—"}</span></td>
+          <td class="text-xs text-slate-500">${c.released || "—"}</td>
+          <td>${action}</td>
+        </tr>`;
+      }).join("") : `<tr><td colspan="8" class="text-center text-slate-500 py-6">no matches</td></tr>`}</tbody>
+    </table>`;
+}
+
+async function addModelFromBrowser(id, btn) {
   btn.disabled = true;
   btn.textContent = "Installing…";
-  msg.classList.remove("hidden");
-  msg.className = "mt-2 text-sm text-slate-600";
-  msg.textContent = "Pulling weights — this may take a few minutes.";
   try {
     await api("/admin/v1/models", { method: "POST", body: JSON.stringify({ id }) });
-    msg.className = "mt-2 text-sm text-green-700";
-    msg.textContent = `Installed ${id}`;
+    toast(`Installed ${id}`, "ok");
     await renderModels();
   } catch (e) {
-    msg.className = "mt-2 text-sm text-red-600";
-    msg.textContent = e.message;
+    toast(`Install failed: ${e.message}`, "err");
     btn.disabled = false;
     btn.textContent = "Install";
   }
@@ -906,9 +1062,10 @@ async function removeModel(id) {
   if (!confirm(`Remove model ${id}? This deletes weights from the local engine (for non-sharded models) or tears down all shards (for sharded models).`)) return;
   try {
     await api(`/admin/v1/models/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast(`Removed ${id}`, "ok");
     await renderModels();
   } catch (e) {
-    alert("Remove failed: " + e.message);
+    toast(`Remove failed: ${e.message}`, "err");
   }
 }
 
@@ -1155,10 +1312,14 @@ function scopeBadge(scope) {
 }
 
 async function renderUsage() {
+  startPolling(5000, renderUsage);
   const root = $("#view-usage");
-  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  if (!root.dataset.loaded) {
+    root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  }
   try {
     const us = (await api("/admin/v1/usage/recent")) || [];
+    root.dataset.loaded = "1";
     const rows = us.map((u) => [
       new Date(u.TS).toLocaleString(),
       `<span class="code">${u.UserID || u.APIKeyID}</span>`,
@@ -1178,10 +1339,14 @@ async function renderUsage() {
 }
 
 async function renderAudit() {
+  startPolling(5000, renderAudit);
   const root = $("#view-audit");
-  root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  if (!root.dataset.loaded) {
+    root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
+  }
   try {
     const es = (await api("/admin/v1/audit/recent")) || [];
+    root.dataset.loaded = "1";
     const rows = es.map((e) => [
       new Date(e.TS).toLocaleString(),
       e.Actor,
