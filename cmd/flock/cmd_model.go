@@ -28,9 +28,10 @@ func cmdModel(args []string) {
 			"flock model search --since 2026-01-01      # only models released since",
 			"flock model info qwen-coder-14b   # full details: capabilities, hardware, fallback chain, install + use snippets",
 			"flock model add llama-3.2-3b      # install (auto-delegates if sharded)",
-			"flock model add llama-3.3-70b --force   # bypass the hardware floor check",
+			"flock model add llama-3.3-70b --force      # bypass the hardware floor check",
+			"flock model add qwen3.6-27b --dry-run      # preview download size, RAM, engine — no pull",
 			"flock model ls                    # list installed models",
-			"flock model remove llama-3.2-3b",
+			"flock model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
 		},
 		notes: []string{
 			"`add` refuses if the catalog's min_ram_gb / min_vram_gb exceeds detected hardware.",
@@ -47,26 +48,34 @@ func cmdModel(args []string) {
 	}
 	switch args[0] {
 	case "add":
-		id, force := parseModelAddArgs(args[1:])
+		id, force, dryRun := parseModelAddArgs(args[1:])
 		if id == "" || !catalogHasID(id) {
 			id = pickCatalogID("Pick a model to install:", id)
 			if id == "" {
 				die("no model selected")
 			}
 		}
+		if dryRun {
+			modelAddDryRun(id)
+			return
+		}
 		modelAdd(id, force)
 	case "ls", "list":
 		modelLs()
 	case "remove", "rm":
+		rest, yes := extractYesFlag(args[1:])
 		id := ""
-		if len(args) >= 2 {
-			id = args[1]
+		if len(rest) >= 1 {
+			id = rest[0]
 		}
 		if id == "" || !installedHasID(id) {
 			id = pickInstalledID("Pick an installed model to remove:", id)
 			if id == "" {
 				die("no model selected")
 			}
+		}
+		if !yes && !confirm(fmt.Sprintf("Remove installed model %q? Weights will be deleted from disk. (y/N) ", id)) {
+			die("aborted")
 		}
 		modelRemove(id)
 	case "search":
@@ -160,20 +169,80 @@ func pickInstalledID(prompt, seed string) string {
 	return pickFromList(prompt, items, seed)
 }
 
-// parseModelAddArgs extracts the model id and the --force flag from the args
-// passed after "model add". Order doesn't matter; `--force` may appear before
-// or after the id.
-func parseModelAddArgs(args []string) (id string, force bool) {
+// parseModelAddArgs extracts the model id and the --force / --dry-run
+// flags from the args passed after "model add". Order doesn't matter.
+func parseModelAddArgs(args []string) (id string, force bool, dryRun bool) {
 	for _, a := range args {
-		if a == "--force" || a == "-force" {
+		switch a {
+		case "--force", "-force":
 			force = true
+			continue
+		case "--dry-run", "-dry-run", "--dryrun":
+			dryRun = true
 			continue
 		}
 		if id == "" {
 			id = a
 		}
 	}
-	return id, force
+	return id, force, dryRun
+}
+
+// modelAddDryRun prints the plan for installing `id` without actually
+// pulling weights. Useful for sanity-checking before a long download.
+func modelAddDryRun(id string) {
+	cfg := loadConfigOrExit()
+	cat := loadCatalogOrExit(cfg)
+	entry := models.FindByID(cat, id)
+	if entry == nil {
+		die("no catalog entry for %q (try `flock model search`)", id)
+	}
+	bold, dim, reset := "\033[1m", "\033[2m", "\033[0m"
+	if os.Getenv("NO_COLOR") != "" {
+		bold, dim, reset = "", "", ""
+	}
+	fmt.Printf("%sDry-run plan for %s%s%s\n", bold, entry.ID, reset, "")
+	fmt.Printf("  %sName%s          %s\n", bold, reset, entry.DisplayName)
+	if entry.SizeBytes > 0 {
+		fmt.Printf("  %sDownload size%s %.1f GB\n", bold, reset, float64(entry.SizeBytes)/1e9)
+	}
+	fmt.Printf("  %sMin RAM%s       %d GB\n", bold, reset, entry.Hardware.MinRAMGB)
+	if entry.Hardware.MinVRAMGB > 0 {
+		fmt.Printf("  %sMin VRAM%s      %d GB\n", bold, reset, entry.Hardware.MinVRAMGB)
+	}
+	if entry.License != "" {
+		fmt.Printf("  %sLicense%s       %s\n", bold, reset, entry.License)
+	}
+	if entry.Released != "" {
+		fmt.Printf("  %sReleased%s      %s\n", bold, reset, entry.Released)
+	}
+
+	if entry.Sharding.Required {
+		fmt.Printf("  %sEngine%s        llama.cpp (sharded across %d workers)\n", bold, reset, entry.Sharding.DefaultShards)
+		fmt.Printf("  %sNext step%s     flock shard create %s\n", bold, reset, entry.ID)
+	} else {
+		eng := newEngineFromConfig(cfg)
+		engineName := engineNativeName(eng.Name(), entry)
+		fmt.Printf("  %sEngine%s        %s (would pull %q)\n", bold, reset, eng.Name(), engineName)
+		if err := eng.Health(context.Background()); err != nil {
+			fmt.Printf("  %sEngine status%s %s%s — engine is not reachable; start it before `flock model add`%s\n", bold, reset, dim, err, reset)
+		} else {
+			fmt.Printf("  %sEngine status%s %sreachable%s\n", bold, reset, dim, reset)
+		}
+		if msg := checkHardwareForModel(entry); msg != "" {
+			fmt.Printf("  %sHardware%s      %s%s%s — would refuse without --force\n", bold, reset, dim, msg, reset)
+		} else {
+			fmt.Printf("  %sHardware%s      %sOK%s\n", bold, reset, dim, reset)
+		}
+		// Rough ETA. Assume 50 MB/s sustained over LAN/HF — pessimistic
+		// enough that it's a useful "is this worth starting now?" number.
+		if entry.SizeBytes > 0 {
+			mins := float64(entry.SizeBytes) / (50.0 * 1024 * 1024) / 60
+			fmt.Printf("  %sETA%s           ~%.0f min at 50 MB/s\n", bold, reset, mins)
+		}
+	}
+	fmt.Println()
+	fmt.Printf("%sNo weights pulled.%s Run `flock model add %s` to proceed.\n", dim, reset, entry.ID)
 }
 
 func modelAdd(id string, force bool) {

@@ -45,10 +45,14 @@ func cmdNode(args []string) {
 		}
 		nodeDrain(args[1])
 	case "remove", "rm":
-		if len(args) < 2 {
-			die("usage: flock node remove <id>")
+		rest, yes := extractYesFlag(args[1:])
+		if len(rest) < 1 {
+			die("usage: flock node remove <id> [--yes]")
 		}
-		nodeRemove(args[1])
+		if !yes && !confirm(fmt.Sprintf("Remove node %q from the cluster? The worker keeps running but the leader will forget it. (y/N) ", rest[0])) {
+			die("aborted")
+		}
+		nodeRemove(rest[0])
 	default:
 		die("unknown subcommand: node %s (run `flock node --help` for usage)", args[0])
 	}

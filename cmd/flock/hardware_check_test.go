@@ -25,7 +25,7 @@ func TestParseModelAddArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			id, force := parseModelAddArgs(c.args)
+			id, force, _ := parseModelAddArgs(c.args)
 			if id != c.wantID || force != c.wantForce {
 				t.Fatalf("got (%q, %v), want (%q, %v)", id, force, c.wantID, c.wantForce)
 			}

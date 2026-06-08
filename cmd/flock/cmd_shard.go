@@ -47,10 +47,14 @@ func cmdShard(args []string) {
 		}
 		shardCreate(args[1], n)
 	case "remove", "rm":
-		if len(args) < 2 {
-			die("usage: flock shard remove <model>")
+		rest, yes := extractYesFlag(args[1:])
+		if len(rest) < 1 {
+			die("usage: flock shard remove <model> [--yes]")
 		}
-		shardRemove(args[1])
+		if !yes && !confirm(fmt.Sprintf("Tear down sharded model %q? The coordinator + every rpc-server will be stopped. (y/N) ", rest[0])) {
+			die("aborted")
+		}
+		shardRemove(rest[0])
 	default:
 		die("unknown subcommand: shard %s", args[0])
 	}
