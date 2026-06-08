@@ -64,6 +64,13 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		}
 		return entry.Fallback
 	})
+	// Latency-aware fallback (Bet #1): opt-in via router.latency_fallback_p95_seconds.
+	// Zero (default) leaves behavior unchanged.
+	if cfg.Router.LatencyFallbackP95Seconds > 0 {
+		routed.SetLatencyConfig(router.LatencyConfig{
+			P95Threshold: time.Duration(cfg.Router.LatencyFallbackP95Seconds) * time.Second,
+		})
+	}
 
 	openaiH := &api.Handler{
 		Engine:  routed,

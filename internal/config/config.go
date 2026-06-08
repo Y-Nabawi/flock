@@ -51,6 +51,14 @@ type RouterConfig struct {
 	DefaultModel   string         `yaml:"default_model"`
 	StickySessions bool           `yaml:"sticky_sessions"`
 	Fallback       FallbackConfig `yaml:"fallback"`
+
+	// LatencyFallbackP95Seconds enables ROADMAP Bet #1 (latency-aware
+	// fallback). When the rolling p95 latency for a primary model exceeds
+	// this many seconds, the router walks the catalog fallback chain for
+	// a faster candidate to try FIRST. Zero (default) keeps the historical
+	// failure-only behavior. Common values: 5–10 seconds. Env override:
+	// FLOCK_LATENCY_P95_SECONDS.
+	LatencyFallbackP95Seconds int `yaml:"latency_fallback_p95_seconds"`
 }
 
 type FallbackConfig struct {
@@ -215,6 +223,11 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FLOCK_VERTEX_LOCATION"); v != "" {
 		c.Router.Fallback.VertexLocation = v
+	}
+	if v := os.Getenv("FLOCK_LATENCY_P95_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.Router.LatencyFallbackP95Seconds = n
+		}
 	}
 }
 

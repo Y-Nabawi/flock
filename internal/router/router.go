@@ -63,6 +63,13 @@ type Router struct {
 	// router.SetFallbackResolver after construction.
 	fallback FallbackResolver
 
+	// latency tracks per-model rolling p95 latency and (when the threshold
+	// is non-zero) preempts a slow primary by trying a faster fallback
+	// first. Always non-nil after New(); the threshold defaults to 0
+	// (disabled — latencies are still recorded for traces / future
+	// metrics, but no reordering).
+	latency *latencyStats
+
 	mu       sync.RWMutex
 	inflight map[string]int            // node_id → live request count
 	remotes  map[string]engines.Engine // node_id → cached remote engine
@@ -77,6 +84,7 @@ func New(local engines.Engine, st store.Store) *Router {
 		localNode: "local",
 		inflight:  make(map[string]int),
 		remotes:   make(map[string]engines.Engine),
+		latency:   newLatencyStats(LatencyConfig{}),
 	}
 }
 
@@ -84,6 +92,15 @@ func New(local engines.Engine, st store.Store) *Router {
 // Callers typically pass a closure over the catalog; nil disables fallback.
 func (r *Router) SetFallbackResolver(f FallbackResolver) {
 	r.fallback = f
+}
+
+// SetLatencyConfig configures latency-aware fallback (Bet #1). With a
+// non-zero P95Threshold, when a primary model's recent p95 latency
+// exceeds the threshold, the router walks the catalog fallback chain
+// for a faster candidate to try FIRST. Original primary stays in the
+// chain so a fast-but-degraded fallback isn't a permanent demotion.
+func (r *Router) SetLatencyConfig(cfg LatencyConfig) {
+	r.latency = newLatencyStats(cfg)
 }
 
 // resolveChain returns [primary, ...fallback]. When no resolver is set or
@@ -140,12 +157,20 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 	defer span.End()
 
 	chain := r.resolveChain(req.Model)
+	if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
+		chain = reordered
+		span.SetAttributes(
+			attribute.Bool("flock.latency.reordered", true),
+			attribute.String("flock.latency.front", chain[0]),
+		)
+	}
 	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
 
 	var primaryErr error
 	for i, candidate := range chain {
 		attempt := req
 		attempt.Model = candidate
+		attemptStart := time.Now()
 
 		attemptCtx, attemptSpan := tracer.Start(ctx, "router.Embed.attempt",
 			trace.WithAttributes(
@@ -191,6 +216,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 				span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 			}
 			span.SetAttributes(attribute.String("flock.model.served", candidate))
+			r.latency.record(candidate, time.Since(attemptStart))
 			return res, nil
 		}
 		attemptSpan.SetStatus(codes.Error, "embed failed")
@@ -230,12 +256,23 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	// inline below if every candidate fails synchronously.
 
 	chain := r.resolveChain(req.Model)
+	// Latency-aware reorder: if primary's recent p95 is over the
+	// configured threshold, surface the fastest fallback first. No-op
+	// when the threshold is 0 (the default).
+	if reordered, swapped := r.latency.reorderByLatency(chain); swapped {
+		chain = reordered
+		span.SetAttributes(
+			attribute.Bool("flock.latency.reordered", true),
+			attribute.String("flock.latency.front", chain[0]),
+		)
+	}
 	span.SetAttributes(attribute.Int("flock.fallback.chain_length", len(chain)))
 
 	var primaryErr error
 	for i, candidate := range chain {
 		attempt := req
 		attempt.Model = candidate
+		attemptStart := time.Now()
 
 		attemptCtx, attemptSpan := tracer.Start(ctx, "router.Chat.attempt",
 			trace.WithAttributes(
@@ -281,6 +318,8 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		span.SetAttributes(attribute.String("flock.model.served", candidate))
 
 		out := make(chan engines.StreamEvent, 16)
+		// Capture once for the closure — `candidate` is the loop var.
+		servedModel := candidate
 		go func() {
 			defer r.decInflight(nodeID)
 			defer close(out)
@@ -303,6 +342,9 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 			}
 			span.SetAttributes(attribute.Int("flock.stream.events", tokenCount))
 			span.SetStatus(codes.Ok, "")
+			// Latency sample for this model = full attempt-to-done duration.
+			// Feeds into reorderByLatency on the next request for this model.
+			r.latency.record(servedModel, time.Since(attemptStart))
 		}()
 		return out, nil
 	}

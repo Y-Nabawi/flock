@@ -692,6 +692,11 @@ engine:
 router:
   default_model: ""                   # empty → auto-pick on first up
   sticky_sessions: true
+  latency_fallback_p95_seconds: 0     # 0 = disabled. When >0, the router
+                                       # walks the catalog `fallback:` chain
+                                       # for a faster candidate FIRST whenever
+                                       # the primary's recent p95 latency
+                                       # exceeds this many seconds. Bet #1.
   fallback:
     enabled: false                    # true → forward unknown claude-*/gpt-* models to vendor
     anthropic_url: "https://api.anthropic.com"
@@ -732,6 +737,7 @@ observability:
 | `FLOCK_BEDROCK_REGION` | `router.fallback.bedrock_region` — enables Bedrock with real SigV4 signing for the anthropic.* family (v0.6); other families return 501 |
 | `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation lands v0.7 |
 | `FLOCK_VERTEX_LOCATION` | `router.fallback.vertex_location` (default `us-central1`) |
+| `FLOCK_LATENCY_P95_SECONDS` | `router.latency_fallback_p95_seconds` — when primary p95 exceeds this, prefer a faster fallback. 0 = disabled (default) |
 
 ### Not yet configurable (roadmap)
 
