@@ -12,22 +12,27 @@ import (
 // expect.
 func TestParseModelAddArgs(t *testing.T) {
 	cases := []struct {
-		name      string
-		args      []string
-		wantID    string
-		wantForce bool
+		name       string
+		args       []string
+		wantID     string
+		wantForce  bool
+		wantDryRun bool
 	}{
-		{"id only", []string{"qwen3.6-27b"}, "qwen3.6-27b", false},
-		{"id then force", []string{"qwen3.6-27b", "--force"}, "qwen3.6-27b", true},
-		{"force then id", []string{"--force", "qwen3.6-27b"}, "qwen3.6-27b", true},
-		{"single-dash form", []string{"qwen3.6-27b", "-force"}, "qwen3.6-27b", true},
-		{"empty", []string{}, "", false},
+		{"id only", []string{"qwen3.6-27b"}, "qwen3.6-27b", false, false},
+		{"id then force", []string{"qwen3.6-27b", "--force"}, "qwen3.6-27b", true, false},
+		{"force then id", []string{"--force", "qwen3.6-27b"}, "qwen3.6-27b", true, false},
+		{"single-dash force", []string{"qwen3.6-27b", "-force"}, "qwen3.6-27b", true, false},
+		{"dry-run only", []string{"qwen3.6-27b", "--dry-run"}, "qwen3.6-27b", false, true},
+		{"dry-run + force", []string{"--dry-run", "qwen3.6-27b", "--force"}, "qwen3.6-27b", true, true},
+		{"dryrun spelling", []string{"qwen3.6-27b", "--dryrun"}, "qwen3.6-27b", false, true},
+		{"empty", []string{}, "", false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			id, force, _ := parseModelAddArgs(c.args)
-			if id != c.wantID || force != c.wantForce {
-				t.Fatalf("got (%q, %v), want (%q, %v)", id, force, c.wantID, c.wantForce)
+			id, force, dryRun := parseModelAddArgs(c.args)
+			if id != c.wantID || force != c.wantForce || dryRun != c.wantDryRun {
+				t.Fatalf("got (%q, force=%v, dryRun=%v), want (%q, force=%v, dryRun=%v)",
+					id, force, dryRun, c.wantID, c.wantForce, c.wantDryRun)
 			}
 		})
 	}

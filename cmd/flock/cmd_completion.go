@@ -89,7 +89,18 @@ var bashCompletion = `
 # bash completion for flock
 _flock() {
     local cur prev words cword
-    _init_completion || return
+    # Use bash-completion v2's helper when available; otherwise fall back to
+    # raw COMP_* vars so the script still works on macOS default bash and
+    # on minimal Linux containers.
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    fi
 
     local sub=${words[1]:-}
     local subsub=${words[2]:-}

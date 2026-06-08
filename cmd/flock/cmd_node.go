@@ -18,8 +18,9 @@ func cmdNode(args []string) {
 		examples: []string{
 			"flock node ls",
 			"flock node show n_abc123",
-			"flock node drain n_abc123      # stop routing new requests to it",
-			"flock node remove n_abc123     # forget it (worker keeps running)",
+			"flock node drain n_abc123             # stop routing new requests to it",
+			"flock node remove n_abc123            # forget it (prompts; worker keeps running)",
+			"flock node remove n_abc123 --yes      # skip the prompt (for scripts)",
 		},
 		notes: []string{
 			"Add a new node: `flock token create --node` then on the worker run `flock join <url>?token=…`.",
