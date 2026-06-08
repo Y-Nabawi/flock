@@ -14,6 +14,6 @@ recommended_engines: [ollama, vllm, llamacpp]
 hardware:
   min_ram_gb: 80
   min_vram_gb: 80
-tags: [moe, multimodal, long-context, meta]
+tags: [moe, multimodal, long-context, meta, restricted-license]
 license: llama-4-community
 license_url: https://www.llama.com/llama4/license/

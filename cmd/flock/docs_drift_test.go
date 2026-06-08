@@ -64,6 +64,62 @@ func TestDocsReferenceRealCommands(t *testing.T) {
 	}
 }
 
+// TestCatalogLicensePresent asserts every catalog entry declares a
+// license. Set by 5d4f… when the license field was added. Backstop for
+// a contributor adding a new model without a license — `flock model info`
+// would otherwise render "License: —" which is worse than a build break.
+func TestCatalogLicensePresent(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	entries, err := models.LoadCatalog(filepath.Join(repoRoot, "catalog"))
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	for _, e := range entries {
+		if e.License == "" {
+			t.Errorf("%s: missing `license:` field — add the SPDX identifier (apache-2.0, mit, llama-3-community, gemma, etc.)", e.ID)
+		}
+	}
+}
+
+// TestCatalogRestrictiveLicenseTagged asserts that any catalog entry with a
+// non-permissive license carries a `restricted-license` tag, so a user
+// running `flock model search restricted-license` finds them all and
+// `flock model info` warns clearly.
+//
+// Permissive set: apache-2.0, mit, bsd-*, lfm-open. Everything else is
+// considered restrictive for tagging purposes (we don't try to encode the
+// full open-source-vs-non-OSS distinction here — operators read the URL).
+func TestCatalogRestrictiveLicenseTagged(t *testing.T) {
+	repoRoot := findRepoRoot(t)
+	entries, err := models.LoadCatalog(filepath.Join(repoRoot, "catalog"))
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	permissive := map[string]bool{
+		"apache-2.0": true, "mit": true, "bsd-2-clause": true, "bsd-3-clause": true,
+		"lfm-open": true,
+	}
+	for _, e := range entries {
+		if e.License == "" {
+			continue // covered by TestCatalogLicensePresent
+		}
+		if permissive[strings.ToLower(e.License)] {
+			continue
+		}
+		hasTag := false
+		for _, tag := range e.Tags {
+			if tag == "restricted-license" {
+				hasTag = true
+				break
+			}
+		}
+		if !hasTag {
+			t.Errorf("%s: license %q is not permissive; add `restricted-license` to tags so users filter on it. Also confirm license_url points at the canonical terms.",
+				e.ID, e.License)
+		}
+	}
+}
+
 // TestCatalogParses verifies every YAML file in catalog/ loads cleanly through
 // the same parser the binary uses at startup. Catches malformed entries
 // before they reach `flock up`.

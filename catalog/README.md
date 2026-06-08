@@ -34,8 +34,10 @@ The parser is `internal/models/catalog.go`. Anything not in this schema is silen
 | Field | Type | Description |
 |---|---|---|
 | `sharding` | object | Set when the model must be split across multiple nodes. See [Sharding](#sharding). |
-| `license` | string | Short identifier (SPDX where possible) of the model's release license. Examples: `apache-2.0`, `mit`, `llama-3-community`, `llama-4-community`, `gemma`, `lfm-open`, `nvidia-open`. Surfaced in `flock model info` so commercial users see it before install. |
+| `license` | string | Short identifier (SPDX where possible) of the model's release license. Examples: `apache-2.0`, `mit`, `llama-3-community`, `llama-4-community`, `gemma`, `lfm-open`, `nvidia-open`. **Required** — CI fails on missing licenses. Surfaced in `flock model info` so commercial users see it before install. |
 | `license_url` | string | Canonical license text URL — usually the HuggingFace LICENSE file. Rendered alongside `license` in `flock model info`. |
+
+**Restricted-license tag convention.** Any entry whose license is not in the permissive set (`apache-2.0`, `mit`, `bsd-2-clause`, `bsd-3-clause`, `lfm-open`) must also carry the tag `restricted-license`. CI enforces this. Users can then `flock model search restricted-license` to find every model with extra terms, and the dashboard's Models tab renders an amber license badge instead of green.
 | `fallback` | []string | Ordered list of catalog IDs to try when this model can't serve a request (engine down, model not loaded, 503, timeout). Tried in order; the first that succeeds wins. Transparent to the client — the response carries the requested model name. Operators see hits in the audit log + stderr. |
 
 ### Source

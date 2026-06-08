@@ -23,7 +23,7 @@ capabilities: [chat, tools]
 recommended_engines: [llamacpp]
 hardware:
   min_ram_gb: 48      # combined across shards
-tags: [sharded, large]
+tags: [sharded, large, restricted-license]
 license: llama-3-community
 license_url: https://www.llama.com/llama3_3/license/
 sharding:
