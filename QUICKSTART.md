@@ -127,13 +127,14 @@ After step 3, Flock prints:
 
 ### A) Fastest — `flock connect <tool>`
 
-Prints copy-paste config for any of 10 supported tools, with your URL + token already substituted:
+Prints copy-paste config for any of 19 supported tools, with your URL + token already substituted:
 
 ```bash
 flock connect claude-code     # Anthropic-API tools
 flock connect cursor          # IDE settings
 flock connect aider           # CLI flags
-flock connect --list          # see all 10
+flock connect                 # no arg → interactive picker
+flock connect --list          # see all 19
 ```
 
 ### B) Web dashboard
@@ -369,17 +370,46 @@ flock model search           # list everything
 flock model search coder     # filter
 ```
 
+A summary table of the 37 catalog entries — see `flock model search` for the live list. ⭐ marks the current top picks.
+
 | Catalog id | What it's for | RAM | Engine name |
 |---|---|---|---|
 | `llama-3.2-1b` | smoke test | 2 GB | `ollama:llama3.2:1b` |
-| `llama-3.2-3b` | small fast chat | 4 GB | `ollama:llama3.2:3b` |
+| `llama-3.2-3b` ⭐ | small fast chat | 4 GB | `ollama:llama3.2:3b` |
+| `moondream3` | tiny vision-language (Raspberry Pi) | 4 GB | `ollama:moondream:3` |
 | `qwen-coder-7b` | code completion + chat | 8 GB | `ollama:qwen2.5-coder:7b` |
-| `qwen-coder-14b` | better code + agent | 16 GB | `ollama:qwen2.5-coder:14b` |
-| `qwen-coder-32b` | strong code agent (laptop max) | 32 GB | `ollama:qwen2.5-coder:32b` |
-| `qwen3-8b` | general chat, balanced | 12 GB | `ollama:qwen3:8b` |
-| `qwen3-14b` | general chat, more capable | 16 GB | `ollama:qwen3:14b` |
+| `mimo-7b` | reasoning-focused 7B | 8 GB | `ollama:mimo:7b` |
+| `mimo-vl-7b` | small vision-language | 8 GB | `ollama:mimo-vl:7b` |
+| `mimo-audio` | speech + audio understanding | 8 GB | `ollama:mimo-audio:7b` |
 | `deepseek-r1-8b` | reasoning ("thinking") | 12 GB | `ollama:deepseek-r1:8b` |
-| `llama-3.3-70b-sharded` | frontier, split across machines | 48+ GB total | sharded llama.cpp |
+| `lfm2.5-8b-a1b` ⭐ | best on-device edge MoE | 8 GB | `ollama:lfm2.5:8b-a1b` |
+| `qwen3-8b` | general chat, balanced | 12 GB | `ollama:qwen3:8b` |
+| `qwen3-vl-8b` | vision + tools (charts, OCR, UI) | 10 GB | `ollama:qwen3-vl:8b` |
+| `gemma4-e2b` | mobile/edge multimodal (text+image+audio) | 8 GB | `ollama:gemma4:e2b` |
+| `gemma4-12b` | encoder-free multimodal | 12 GB | `ollama:gemma4:12b` |
+| `gemma4-e4b` | mobile/edge multimodal | 12 GB | `ollama:gemma4:e4b` |
+| `pixtral-12b` | Mistral vision-language | 16 GB | `ollama:pixtral:12b` |
+| `mellum2-12b` | JetBrains MoE coder (2.5B active) | 12 GB | `ollama:mellum2:12b` |
+| `mistral-nemo-12b` | 128K context chat | 12 GB | `ollama:mistral-nemo:12b` |
+| `qwen-coder-14b` | better code + agent | 16 GB | `ollama:qwen2.5-coder:14b` |
+| `qwen3-14b` | general chat, more capable | 16 GB | `ollama:qwen3:14b` |
+| `phi-4-14b` | strong reasoning per byte | 12 GB | `ollama:phi-4:14b` |
+| `gpt-oss-20b` ⭐ | OpenAI open-weight reasoning | 16 GB | `ollama:gpt-oss:20b` |
+| `qwen3.6-27b` ⭐ | top consumer pick (77% SWE-bench) | 24 GB | `ollama:qwen3.6:27b` |
+| `gemma4-26b` | MoE 4B-active, multimodal | 24 GB | `ollama:gemma4:26b` |
+| `qwen3-30b` | MoE 3B-active, fast | 24 GB | `ollama:qwen3:30b` |
+| `qwen3-coder-30b` | MoE coder, 3.3B active | 24 GB | `ollama:qwen3-coder:30b` |
+| `qwen3-vl-32b` | frontier-tier vision-language | 32 GB | `ollama:qwen3-vl:32b` |
+| `qwen-coder-32b` | strong code agent (laptop max) | 32 GB | `ollama:qwen2.5-coder:32b` |
+| `gemma4-31b` | multimodal vision-language | 32 GB | `ollama:gemma4:31b` |
+| `llama-3.3-70b-sharded` | sharded across machines | 48+ GB total | sharded llama.cpp |
+| `gpt-oss-120b` | OpenAI open-weight, single H100 | 80 GB | `ollama:gpt-oss:120b` |
+| `llama-4-scout` | 10M context, multimodal | 80 GB | `ollama:llama4:scout` |
+| `step-3.7-flash-sharded` ⭐ | fastest frontier MoE VLM | 128 GB total | sharded llama.cpp |
+| `deepseek-v4-flash-sharded` ⭐ | 13B active, frontier reasoning | 160 GB total | sharded llama.cpp |
+| `nemotron-3-ultra-sharded` | Mamba-MoE, 1M ctx, MMLU 89.1 | 320 GB total | sharded llama.cpp |
+| `glm-5.1-sharded` | best agentic coder | 416 GB total | sharded llama.cpp |
+| `kimi-k2.6-sharded` | #1 open coding benchmarks | 512 GB total | sharded llama.cpp |
 
 ### Install + use a specific model
 
@@ -529,7 +559,7 @@ Other options:
 
 ```bash
 flock update --check              # see if there's a new version, don't install
-flock update --version v0.1.1     # pin a specific version
+flock update --version v1.11.0    # pin a specific version (see github.com/hadihonarvar/flock/releases)
 flock update --force              # reinstall even if already on the latest
 flock upgrade                     # alias of `update`
 ```
@@ -560,14 +590,14 @@ flock up
 
 ## 🔒 Security model (read before exposing it)
 
-Flock v0.4 assumes a **trusted network** (LAN or [Tailscale](https://tailscale.com/)). Specifically:
+Flock assumes a **trusted network** (LAN or [Tailscale](https://tailscale.com/)). Specifically:
 
 - **User API keys** (admin / user scope) are **sha256-hashed** in the database. The plaintext shown at creation time is the only way to use the key.
-- **Worker tokens** (the shared secret between leader and worker) are stored on the `nodes.worker_token` column. As of v0.5, control-plane traffic uses **HMAC-SHA256 signatures** so the token itself isn't transmitted on the wire after the initial join — the agent and leader both sign with the per-node token. The SQLite file still holds the secret, so a stolen DB still lets an attacker impersonate a worker; encrypt the DB at rest if you can't trust the host. Set `FLOCK_REJECT_BEARER=1` on workers to refuse the bearer-fallback path entirely (HMAC-only).
+- **Worker tokens** (the shared secret between leader and worker) are stored on the `nodes.worker_token` column. Control-plane traffic uses **HMAC-SHA256 signatures** so the token itself isn't transmitted on the wire after the initial join — the agent and leader both sign with the per-node token. The SQLite file still holds the secret, so a stolen DB still lets an attacker impersonate a worker; encrypt the DB at rest if you can't trust the host. Set `FLOCK_REJECT_BEARER=1` on workers to refuse the bearer-fallback path entirely (HMAC-only).
 - **Worker HTTP servers** bind only to the mesh address (LAN / tailnet IP), never to `0.0.0.0`. Network reachability is the first line of defense.
 - The **embedded web UI** authenticates by pasted admin key (stored in browser `localStorage`).
 
-If you're not on a trusted LAN, still run the cluster **behind Tailscale** or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer fallback exists for one transition release; set `FLOCK_REJECT_BEARER=1` once every leader and worker is on v0.5+.
+If you're not on a trusted LAN, still run the cluster **behind Tailscale** or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption. The bearer-fallback path is supported for upgrade transitions; set `FLOCK_REJECT_BEARER=1` once every leader and worker is on a recent build.
 
 ### 🌐 Network behavior — every call Flock can make
 

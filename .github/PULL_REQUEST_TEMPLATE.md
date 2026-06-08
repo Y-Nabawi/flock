@@ -26,7 +26,7 @@ Closes #
 - [ ] One change per PR — no drive-by edits in unrelated files
 - [ ] `make check` (or `go vet ./... && go test ./...`) passes locally
 - [ ] Added or updated tests where behavior changed
-- [ ] Updated docs in the same PR — `README.md`, `QUICKSTART.md`, `MODELS.md`, `ARCHITECTURE.md`, `site/index.html`, or CLI `--help` as applicable
+- [ ] Updated docs in the same PR — `README.md`, `QUICKSTART.md`, `MODELS.md`, `ARCHITECTURE.md`, `internal/ui/index.html`, or CLI `--help` as applicable
 - [ ] If a new CLI command: added it to `cmd/flock/main.go` help + `flock <cmd> --help` examples
 - [ ] If a new catalog entry: verified the source actually exists (Ollama tag pulls, HF repo loads, or GGUF URL is real)
 - [ ] PR title follows the convention from existing commits (e.g. `feat: ...`, `fix: ...`, `catalog: ...`, `docs: ...`)

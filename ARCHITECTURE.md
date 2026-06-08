@@ -2,7 +2,7 @@
 
 Deep-dive design for contributors and maintainers. For user-facing docs, see [README.md](README.md). For the active implementation plan, see [TASKS.md](TASKS.md).
 
-> **Doc-vs-code currency:** this document describes v0.5 (cross-node routing + sharding auto-orchestration + CLI/UI parity + HMAC mutual auth + GGUF distribution + OTLP traces + 15 connect clients). The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
+> **Doc-vs-code currency:** this document covers the shipped feature set — cross-node routing, sharding auto-orchestration, CLI/UI parity, HMAC mutual auth, GGUF distribution, OTLP traces, 19 connect clients, interactive picker, shell completion, `--json` on every read command, `--summary` aggregates for usage/audit, first-run wizard, real progress bar, colored output, engine health watchdog, typed `engine_unreachable` errors. The code on `main` is the source of truth — if you find a mismatch please file an issue or PR.
 
 ---
 
@@ -900,7 +900,7 @@ flock/
     └── homebrew/flock.rb      # tap formula template (publishing disabled until tap repo exists)
 ```
 
-*Planned dirs* (not present yet): `web/` (separate Next.js UI alternative to embed), `dashboards/` (Grafana JSON), `deploy/{launchd,systemd,docker}/`, `docs/` (RFC archive), `test/{integration,e2e}/`.
+*Planned dirs* (not present yet): `web/` (separate Next.js UI alternative — UI is currently embedded HTML at `internal/ui/index.html`), `deploy/{launchd,systemd,docker}/`, `test/{integration,e2e}/`. `dashboards/` and `docs/` exist on `main`.
 
 ### Naming conventions
 
@@ -940,8 +940,7 @@ flock/
 
 ### Prerequisites
 
-- Go 1.22+
-- Node.js 20+ (for the UI)
+- Go 1.25+
 - Optional: NVIDIA Container Toolkit (for vLLM workers)
 
 ### Build
@@ -950,10 +949,7 @@ flock/
 git clone https://github.com/hadihonarvar/flock
 cd flock
 
-# Build the UI first; the Go binary embeds it
-(cd web && npm ci && npm run build)
-
-# Build the binary
+# Build the binary — the UI is a single embedded HTML file
 go build -o flock ./cmd/flock
 
 # Smoke test
@@ -993,7 +989,7 @@ make check             # lint + test + build (this is what CI runs)
 ./flock up             # boots a single-node leader against local Ollama
 ```
 
-You only need Go 1.22+ and a working Ollama install (`brew install --cask ollama` on macOS, or `curl -fsSL https://ollama.com/install.sh | sh` on Linux). No Docker, no Python, no Node — the web UI is a single embedded HTML file compiled into the binary.
+You only need Go 1.25+ and a working Ollama install (`brew install --cask ollama` on macOS, or `curl -fsSL https://ollama.com/install.sh | sh` on Linux). No Docker, no Python, no Node — the web UI is a single embedded HTML file compiled into the binary.
 
 The first `flock up` will:
 

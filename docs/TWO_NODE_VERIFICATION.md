@@ -39,7 +39,7 @@ On the leader:
 
 You should see:
 
-- "✔ Installed flock v0.4.0" (or whatever version)
+- "flock 1.11.0 (darwin/arm64, go1.25)" (version line — actual version depends on what you installed)
 - Auto-detected engine + default model line
 - **Admin key printed once** — copy it. You'll need it.
 - "✔ Listening on :8080"

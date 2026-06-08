@@ -24,7 +24,7 @@ The parser is `internal/models/catalog.go`. Anything not in this schema is silen
 | `size_bytes` | int | On-disk weight size in bytes. Used for the picker and for placement. |
 | `quant` | string | Quantization label (`q4_k_m`, `q8_0`, `f16`, …). Display only. |
 | `context_window` | int | Maximum tokens the model accepts (input + output). |
-| `capabilities` | []string | One or more of: `chat`, `tools`, `vision`, `embedding`, `rerank`. Routing uses these to match requests. |
+| `capabilities` | []string | One or more of: `chat`, `tools`, `vision`, `audio`, `embedding`, `rerank`. Routing uses these to match requests. (`audio` is a discovery tag today — declare it on audio-capable models, but the API path for audio input is still pending.) |
 | `recommended_engines` | []string | Engines that can serve this model, in preference order. One or more of: `ollama`, `vllm`, `mlx`, `llamacpp`. |
 | `hardware` | object | Minimum hardware. See [Hardware](#hardware). |
 | `tags` | []string | Free-form search tags (`small`, `code`, `vision`, `apache-2.0`, …). |
@@ -105,6 +105,7 @@ Then either `flock model add <id>` (which will call shard create with `default_s
 | `chat` | Model accepts conversational messages | `POST /v1/chat/completions`, `POST /v1/messages` |
 | `tools` | Model supports tool/function calling | Both chat endpoints; tool blocks in request/response |
 | `vision` | Model accepts image content blocks | `POST /v1/chat/completions` with `image_url` (Ollama path) |
+| `audio` | Model accepts audio content (discovery tag) | API path pending; declare on models with audio understanding |
 | `embedding` | Model returns vector embeddings | `POST /v1/embeddings` |
 | `rerank` | Cross-encoder reranking | `POST /v1/rerank` (planned; not yet wired) |
 

@@ -6,7 +6,7 @@ Every model in Flock's catalog, with step-by-step install + use instructions for
 >
 > ```bash
 > flock connect claude-code        # or: cursor, aider, continue, zed, cline, qwen-code, openai-sdk, anthropic-sdk, curl
-> flock connect --list             # all 10 supported tools
+> flock connect --list             # all 19 supported tools
 > ```
 >
 > Or click **Connect** in the dashboard (`http://localhost:8080`).
@@ -17,24 +17,32 @@ Every model in Flock's catalog, with step-by-step install + use instructions for
 
 ## 🎯 Picker table — what to install
 
-Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **37 models** as of v0.21.0 (run `flock model search` for the live list).
+Scan the column that matches your hardware, then pick by use case. ⭐ = recommended starting point in each row. Catalog has **37 models** at last update (run `flock model search` for the live list, or `flock model search --sort=released` for newest-first).
 
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
 | **Edge — laptop / Raspberry-Pi-ish** |  |  |  |  |  |  |  |  |  |  |
 | `llama-3.2-1b`                 | 1.3 GB | 2 GB    |  •   |      |           |        |       |          | Llama 3.2   | Smoke test only                        |
+| `moondream3`                   | 1.2 GB | 4 GB    |  ●   |      |           |   ●    |       |          | Apache-2.0  | Tiny vision-language, runs on Pi       |
 | `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |       |          | Llama 3.2   | Edge default                           |
 | **Small — 8-16 GB box**        |        |         |      |      |           |        |       |          |             |                                        |
+| `mimo-7b`                      | 4.5 GB | 8 GB    |  ●   |      |    ●●     |        |       |          | Apache-2.0  | Xiaomi reasoning-focused 7B            |
 | `qwen-coder-7b`                | 4.7 GB | 8 GB    |  ●   |  ●   |           |        |       |          | Apache-2.0  | FIM-capable, older                     |
+| `mimo-vl-7b`                   | 4.8 GB | 8 GB    |  ●   |      |           |   ●    |       |          | Apache-2.0  | Small vision-language                  |
+| `mimo-audio`                   | 4.8 GB | 8 GB    |  ●   |      |           |        |   ●   |          | Apache-2.0  | Speech + audio understanding           |
 | `deepseek-r1-8b`               | 4.9 GB | 12 GB   |  ●   |      |    ●●     |        |       |          | MIT         | Distilled reasoning                    |
 | `lfm2.5-8b-a1b` ⭐              | 5.0 GB | 8 GB    |  ●   |      |    ●●     |        |       |    ●●    | LFM Open    | Best on-device MoE (1B active)         |
 | `qwen3-8b`                     | 5.2 GB | 12 GB   |  ●   |      |           |        |       |          | Apache-2.0  | General chat                           |
+| `qwen3-vl-8b`                  | 5.5 GB | 10 GB   |  ●   |  ●   |           |   ●●   |       |          | Apache-2.0  | Vision + tools (charts, OCR, UI)       |
+| `gemma4-e2b`                   | 7.2 GB | 8 GB    |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma       | Mobile/edge multimodal (T/I/A)         |
 | `mellum2-12b`                  | 7.0 GB | 12 GB   |  ●   |  ●●  |    ●●     |        |       |          | Apache-2.0  | JetBrains MoE coder (2.5B active)      |
 | `mistral-nemo-12b`             | 7.1 GB | 12 GB   |  ●   |      |           |        |       |    ●●    | Apache-2.0  | 128K context                           |
 | `gemma4-12b`                   | 7.6 GB | 12 GB   |  ●   |      |           |   ●●   |   ●   |    ●●    | Gemma       | Encoder-free any-to-any (T/I/A/V)      |
+| `pixtral-12b`                  | 7.8 GB | 16 GB   |  ●   |      |           |   ●●   |       |          | Apache-2.0  | Mistral vision-language                |
 | `qwen-coder-14b`               | 9.0 GB | 16 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense code+agent                       |
 | `qwen3-14b`                    | 9.0 GB | 16 GB   |  ●   |      |           |        |       |          | Apache-2.0  | More capable Qwen3 chat                |
 | `phi-4-14b`                    | 9.1 GB | 12 GB   |  ●   |      |    ●●     |        |       |          | MIT         | Strong reasoning per byte              |
+| `gemma4-e4b`                   | 9.6 GB | 12 GB   |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma       | Mobile/edge multimodal, larger E-tier  |
 | **Mid — 24-32 GB box**         |        |         |      |      |           |        |       |          |             |                                        |
 | `gpt-oss-20b` ⭐                | 14 GB  | 16 GB   |  ●   |  ●   |    ●●     |        |       |    ●     | Apache-2.0  | OpenAI open-weight, adjustable thinking |
 | `qwen3.6-27b` ⭐                | 17 GB  | 24 GB   |  ●●  |  ●●  |    ●      |        |       |    ●●    | Apache-2.0  | 77 % SWE-bench, top consumer pick      |
@@ -42,6 +50,8 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 | `qwen3-30b`                    | 19 GB  | 24 GB   |  ●●  |      |           |        |       |    ●●    | Apache-2.0  | MoE 3B-active, very fast               |
 | `qwen3-coder-30b`              | 19 GB  | 24 GB   |  ●   |  ●●  |           |        |       |    ●●    | Apache-2.0  | MoE 3.3B-active coder                  |
 | `qwen-coder-32b`               | 20 GB  | 32 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense, older but proven                |
+| `qwen3-vl-32b`                 | 20 GB  | 32 GB   |  ●   |  ●   |           |   ●●●  |       |          | Apache-2.0  | Frontier-tier vision-language          |
+| `gemma4-31b`                   | 20 GB  | 32 GB   |  ●   |      |           |   ●●   |       |    ●●    | Gemma       | Multimodal, larger than 26B            |
 | **Power user — single 80 GB GPU / sharded** |  |  |  |  |  |  |  |  |  |  |
 | `llama-3.3-70b-sharded`        | 43 GB  | 48 GB   |  ●●  |      |           |        |       |    ●●    | Llama 3.3   | Needs ≥2 nodes                         |
 | `gpt-oss-120b`                 | 65 GB  | 80 GB   |  ●●  |  ●   |    ●●●    |        |       |    ●     | Apache-2.0  | ≈ o4-mini reasoning, single H100       |
@@ -67,7 +77,7 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 - **My team has 4 Mac Studios** → install the same model (e.g. `qwen3.6-27b`) on each — Flock load-balances automatically. No sharding needed for throughput.
 - **A model bigger than any one machine** → sharded tier. Start with `step-3.7-flash-sharded` (Apache-2.0) or `deepseek-v4-flash-sharded` (MIT).
 
-For the full per-model walkthrough (the 9 original entries below have detailed install + client snippets), keep scrolling. For the 13 newer entries, run `flock model info <id>` — same fields as the table above, plus engine compatibility.
+For per-model walkthroughs (with detailed install + client snippets), the curated set below covers the longest-standing entries. For the rest of the catalog (10+ newer additions including Gemma 4 family, MiMo, Qwen3-VL, Pixtral, Moondream), run `flock model info <id>` — same fields as the table above, plus engine compatibility, license, and release date.
 
 ---
 
@@ -75,11 +85,11 @@ For the full per-model walkthrough (the 9 original entries below have detailed i
 
 Use the [picker table above](#-picker-table--what-to-install). It covers every model in the catalog with size, RAM, capability ratings, and license — pick the row that matches your hardware, then go by use case.
 
-The per-model walkthroughs below (with full install + client snippets) cover the **9 original v0.1.0 entries**. For the **17 newer entries** added in v0.2 / v0.2.1, run `flock model info <id>` for the same metadata, or open a [catalog issue](https://github.com/hadihonarvar/flock/issues/new?template=catalog_request.yml) if you want a full walkthrough added.
+The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `flock model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/hadihonarvar/flock/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
 
 ---
 
-## Table of contents (original v0.1.0 walkthroughs)
+## Table of contents (curated walkthroughs)
 
 - [`llama-3.2-1b`](#llama-3-2-1b--smallest-smoke-test) — smallest, smoke test
 - [`llama-3.2-3b`](#llama-3-2-3b--small-fast-chat) — small fast chat

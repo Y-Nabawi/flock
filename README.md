@@ -170,7 +170,7 @@ claude
 
 | | |
 |---|---|
-| **Status** | Alpha — build-verified on macOS/arm64 + ubuntu-24.04; single-node verified end-to-end with curl; multi-node routing has in-process E2E coverage (`internal/controlplane/two_node_e2e_test.go`); real two-machine verification is the [30-sec smoke script](scripts/two-node-smoke.sh) + [manual walkthrough](docs/TWO_NODE_VERIFICATION.md) |
+| **Status** | Beta — single-node verified end-to-end (curl, dashboard, CLI); multi-node routing has in-process E2E coverage (`internal/controlplane/two_node_e2e_test.go`); real two-machine verification via the [30-sec smoke script](scripts/two-node-smoke.sh) + [manual walkthrough](docs/TWO_NODE_VERIFICATION.md). Auto-released on every `feat:` / `fix:` commit (see [Releases](https://github.com/hadihonarvar/flock/releases)). |
 | **License** | Apache 2.0 |
 | **Language** | Go (orchestrator + embedded HTML UI) |
 | **Platforms** | macOS (Apple Silicon), Linux (x86_64, arm64) |
@@ -187,7 +187,17 @@ claude
 - ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (single-node *and* RPC mode; llama-server is **auto-spawned** when the catalog entry has `source.repo` set — no manual `llama-server` step)
 - ✅ Engine endpoints + API keys configurable per engine via env (`FLOCK_VLLM_ENDPOINT`, `VLLM_API_KEY`, …)
 - ✅ Hardware auto-detection (mac + linux + NVIDIA) and auto-pick a default model
-- ✅ Catalog with curated model entries (Llama 3.2, Qwen2.5-Coder)
+- ✅ Catalog with 37 curated model entries spanning Llama, Qwen, Gemma, MiMo, DeepSeek, GPT-OSS, Mistral, Phi, Kimi, GLM, Nemotron, StepFun, Moondream, Pixtral families — with `released:` dates and license metadata enforced by CI
+- ✅ Interactive picker (`flock model add|info|remove`, `flock connect` with no ID launches a fuzzy-filter picker — ↑↓/enter)
+- ✅ Shell completion (`flock completion bash|zsh|fish`)
+- ✅ Colored CLI output (auto-detects TTY; respects `NO_COLOR` / `FLOCK_NO_COLOR`)
+- ✅ `--json` on every read command (`model search/ls/info`, `status`, `usage`, `audit`) for scripting
+- ✅ `flock usage --summary` / `flock audit --summary` aggregate views (top models, p50/p95/p99, error rate, sparkline) — same data as the dashboard home view
+- ✅ First-run wizard on `flock up` (picker-driven starter-model install; skip with `--no-wizard`)
+- ✅ Real progress bar on `flock model add` with bytes/sec + ETA
+- ✅ `--dry-run` on `flock model add` (preview download size, engine, RAM check, ETA without pulling weights)
+- ✅ Confirmation prompt on `flock model remove` / `flock node remove` / `flock shard remove` (skip with `--yes`)
+- ✅ Did-you-mean for top-level subcommand typos (Damerau-Levenshtein over the command list)
 
 ### Multi-node (cross-node routing — landed, untested with 2 real boxes)
 
@@ -199,15 +209,15 @@ claude
 - ✅ Agent handles auth errors gracefully (401 → exit, 404 → re-register, transient → exponential backoff)
 - ✅ **Sharding auto-orchestration** — `flock shard create <model> <N>` picks N workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, registers the placement, and the Router routes requests to the coordinator transparently. Web UI exposes the same in the Shards tab.
 - ✅ Process supervisor (`internal/agent/supervisor.go`) — Start/Stop/Logs with TCP-port readiness probe, used by the leader for the coordinator and by workers for rpc-server.
-- ⚠️ Tailscale `tsnet` mesh backend — interface defined; LAN backend ships in v0.3
+- ⚠️ Tailscale `tsnet` mesh backend — interface defined; LAN backend ships, tsnet implementation pending
 
 ### Multi-tenant + observability
 
 - ✅ Per-user API keys with scopes (admin / user / node), daily token quotas, audit log
 - ✅ Usage metering — every request recorded with model/protocol/tokens/latency; metrics fire even in dev mode (no key required)
 - ✅ Prometheus metrics at `/metrics`
-- ✅ Embedded web UI (single HTML, Tailwind via CDN) — dashboard, nodes, models, usage, audit, settings
-- ⚠️ OIDC for the UI — deferred to v0.4; UI uses pasted API key for now
+- ✅ Embedded web UI (single HTML, Tailwind via CDN) — dashboard home with sparkline + p50/p95/p99 + error rate + top model + recent activity strip; live polling (5s) on Nodes/Models/Usage/Audit; persistent top-bar chips for role + engine reachability + node/model counts; filterable catalog browser on the Models tab; "Add a worker" modal with one-time join token + copy-pasteable install-and-join snippets
+- ⚠️ OIDC for the UI — UI uses pasted admin key for now
 
 ### Release + ops
 
@@ -218,7 +228,7 @@ claude
 
 ### Verified to work
 
-- ✅ `go build ./cmd/flock` — clean on go 1.22 / darwin-arm64
+- ✅ `go build ./cmd/flock` — clean on go 1.25 / darwin-arm64
 - ✅ `go vet ./...` — clean
 - ✅ `flock up` boots, bootstraps admin key, starts gateway
 - ✅ `flock up` → `curl /v1/models` returns the auto-picked model
@@ -289,15 +299,15 @@ flock up
 You'll see:
 
 ```
-✔ Installed flock v0.1.0
-✔ Detected: Apple M3, 24 GB unified memory
-✔ Started control plane on http://localhost:8080
-✔ Mesh ready (tailnet: flock-7f3a)
-✔ Auto-selected model: qwen2.5-coder:7b (fits in 24 GB)
-✔ Downloading model... ████████████ 100%
-✔ Ready.
+▶ detected darwin/arm64 · 24 GB RAM · 8 cores
+✔ default model: qwen-coder-7b
+✔ engine: ollama at http://127.0.0.1:11434
+▶ pulling qwen-coder-7b · downloading [████████████████████] 4.7/4.7 GB · 85 MB/s · ETA 0:00
+✔ model ready: qwen-coder-7b
 
-  Web UI: http://localhost:8080
+  Flock is ready.
+
+  Dashboard: http://localhost:8080
   API:    http://localhost:8080/v1
   Key:    sk-orc-xK9p…  (also in UI)
 
@@ -393,21 +403,24 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ### Inference
 
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, `/v1/models`, `/v1/audio/transcriptions`)
+- OpenAI-compatible API (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`)
 - Anthropic-compatible API (`/v1/messages`, `/v1/messages/count_tokens`)
 - SSE streaming
 - Tool / function calling (pass-through for capable models)
-- Vision (image input) on multimodal models
+- Vision (image input) on multimodal models — `image_url` content blocks on `/v1/chat/completions` route through the Ollama engine path
 - Structured output (JSON schema)
 - `model=auto` smart routing
 - Sticky sessions by user/session ID for KV cache reuse
+- Typed `engine_unreachable` errors with engine name, endpoint, and start-hint (e.g. `ollama serve`) when the upstream engine isn't responding
+- Engine health watchdog on auto-spawned engines (force-restart after 3 consecutive failures, covers hung llama-server)
 - LoRA adapter hot-loading (planned)
+- `/v1/completions`, `/v1/audio/transcriptions`, `/v1/rerank` (planned)
 
 ### Cluster
 
 - Auto-discovery — a node joins by running one command with a token
 - Auto-placement — scheduler picks which node(s) host which model
-- Heterogeneous sharding via llama.cpp RPC for models larger than any single node (planned)
+- Heterogeneous sharding via llama.cpp RPC for models larger than any single node — `flock shard create <model> <N>` orchestrates the coordinator + every rpc-server end-to-end
 - Live model migration (planned)
 - Cross-platform workers: Mac (MLX), Linux+NVIDIA (vLLM), Linux+AMD (vLLM ROCm — planned), CPU (llama.cpp fallback)
 - HA leader (planned)
@@ -417,13 +430,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Per-user API keys with revocation and scopes (admin / user / node)
 - Daily token quotas per key with usage metering
 - Audit log of every admin mutation
-- OIDC login for the web UI (Google, GitHub, Okta) — **planned**; v0.4 uses a pasted admin key
+- OIDC login for the web UI (Google, GitHub, Okta) — **planned**; the UI currently uses a pasted admin key
 
 ### Hybrid local + cloud
 
 - Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
 - Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
-- Bedrock / Vertex / other cloud providers — **planned**
+- **AWS Bedrock**: SigV4 signing for `anthropic.*` models (non-streaming). Streaming body translation for other families pending.
+- **GCP Vertex**: ADC auth probe wired. Body translation for `generateContent` pending.
 
 ### Observability
 
@@ -431,13 +445,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - Per-call usage records (model, protocol, tokens, latency, outcome) via `flock usage` and the Usage tab
 - Admin audit log via `flock audit` and the Audit tab
 - Reference Grafana dashboards in [`dashboards/`](dashboards/) — `cluster-overview.json`, `per-model.json`, `per-node.json`. Import any of them into Grafana 10+ and point at your Prometheus scrape of Flock's `/metrics`.
-- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Flock emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `ollama.Chat` (engine call with prompt/completion token counts). vLLM / MLX / llamacpp drivers ship the same pattern in v0.7. W3C `traceparent` propagation is always on so Flock participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
+- OpenTelemetry / OTLP traces. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to your collector — e.g. `http://localhost:4318` — and Flock emits a full span hierarchy per request: `http.request` → `router.Chat` (covers the whole stream) → `router.Chat.attempt` (one per fallback retry) → `<engine>.Chat` (engine call with prompt/completion token counts). All four engine drivers (ollama, vllm, mlx, llamacpp) export the same span shape. W3C `traceparent` propagation is always on so Flock participates correctly between two services that both export. Empty endpoint = no-op (zero overhead beyond the NoopTracerProvider).
 
 ### Developer experience
 
 - One-line install (`curl | sh`)
-- One-line model add (`flock model add llama3.3`)
+- One-line model add (`flock model add qwen3.6-27b`) with a real progress bar and `--dry-run` preview
 - One-line client config (UI generates per-tool snippets)
+- Interactive picker for `flock model add|info|remove` and `flock connect` — no need to memorize IDs
+- Shell completion for bash / zsh / fish (`flock completion <shell>`)
 - Sensible defaults, no required flags
 - Embedded web UI — no separate frontend to deploy
 
@@ -484,10 +500,14 @@ Routing logic lives in `internal/api/egress.go`; vendor detection in `internal/r
 
 These work today via `flock model add hf:owner/repo` but don't have curated YAML entries with hardware specs:
 
-- **Larger general / agent models** — Qwen3-235B, MiniMax-M2.7, MiMo-V2 — pending sharded YAML entries.
-- **Vision (image input)** — `llama-4-scout`, `gemma4-26b`, and `qwen3-vl:*` are in the catalog but the API path (`POST /v1/chat/completions` with image_url) still needs engine wiring → tracked as **M4-T03**.
-- **Embeddings + rerank (for RAG)** — `/v1/embeddings` endpoint not shipped; tracked as **M4-T05**.
-- **Speech / transcription** — `/v1/audio/transcriptions` not shipped; tracked as **M4-T04**.
+- **Larger general / agent models** — Qwen3-235B, MiniMax-M2.7, MiMo-V2 sharded variants — pending sharded YAML entries.
+- **Speech / transcription** — `/v1/audio/transcriptions` not yet shipped.
+- **Rerank** — `/v1/rerank` not yet shipped (capability declared in catalog schema for future use).
+
+Shipped recently (don't fall in this list):
+- **Vision (image input)** — `gemma4-12b`, `gemma4-26b`, `gemma4-31b`, `gemma4-e2b`, `gemma4-e4b`, `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`, `moondream3`, `mimo-vl-7b`, `llama-4-scout` all serve through `/v1/chat/completions` with `image_url` content blocks.
+- **Embeddings (for RAG)** — `/v1/embeddings` is live; install `nomic-embed-text` and call it from any OpenAI-shape embedding client.
+- **Audio (input)** — `mimo-audio`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
 
 ---
 
@@ -628,7 +648,7 @@ go build -o flock ./cmd/flock
 ./flock version
 ```
 
-Requires Go 1.22+. See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#build-from-source) for cross-compile + release builds.
+Requires Go 1.25+. See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#build-from-source) for cross-compile + release builds.
 
 ### System requirements
 
@@ -965,7 +985,7 @@ Token comes from `--token`, then `$FLOCK_TOKEN`, then `~/.flock/admin.key` (writ
 ```bash
 flock disconnect claude-code        # prints the unset + sk-ant-… export commands
 flock disconnect cursor             # GUI steps to clear the override
-flock disconnect --list             # same 10 clients
+flock disconnect --list             # same 19 clients
 ```
 
 Prints the exact commands to roll back whatever `flock connect` set up — does NOT modify any shell, editor, or config file. You run the commands when you're ready. Once disconnected, the client talks straight to the vendor (`api.anthropic.com`, `api.openai.com`); nothing about your Flock host needs to change. Re-run `flock connect <client>` anytime to go back.
@@ -1092,7 +1112,7 @@ print(resp.content[0].text)
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path) |
+| `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
 | `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
 | `GET` | `/v1/models` | Lists available models |
 
@@ -1127,8 +1147,11 @@ print(resp.content[0].text)
 | `POST` | `/admin/v1/shards/create` | Orchestrate a sharded model |
 | `DELETE` | `/admin/v1/shards/{model_id}` | Tear down a sharded model |
 | `GET` | `/admin/v1/usage/recent` | Recent inference records |
+| `GET` | `/admin/v1/usage/summary` | Aggregate stats (top models, p50/p95/p99, error rate, RPM sparkline) |
 | `GET` | `/admin/v1/audit/recent` | Recent admin actions |
+| `GET` | `/admin/v1/audit/summary` | Top actors + top actions |
 | `GET` | `/admin/v1/config` | Effective config, secrets redacted |
+| `GET` | `/admin/v1/status` | Compact role + engine reachability + node/model counts (powers dashboard top-bar chips) |
 
 All admin endpoints require an admin key (`flock token create --admin`).
 
@@ -1148,51 +1171,63 @@ All admin endpoints require an admin key (`flock token create --admin`).
 
 ## CLI reference
 
-Every admin action is available via the CLI **and** the web UI — full parity since v0.4.
+Every admin action is available via the CLI **and** the web UI — full parity. Most subcommands launch an interactive picker (type to filter, ↑↓/enter) when called with no argument or an unknown ID, so you rarely need to memorize an ID.
 
 ```
 # --- lifecycle (CLI only — UI can't kill the process running the UI) ---
-flock up                          Start the local node (leader on first run)
+flock up [--no-wizard] [--auto-pull=false]   Start the local node (first-run wizard
+                                              picker installs a starter model unless
+                                              --no-wizard is set)
 flock down                        Stop the local node
-flock status                      Show local + cluster status
+flock status [--json]             Show local + cluster status
 flock join <url>?token=…          Join an existing cluster as a worker
 flock doctor                      Diagnose common problems
 flock update [--check]            Check / install the latest Flock release
 flock upgrade                     Alias for `update`
+flock completion <bash|zsh|fish>  Print a shell completion script
 flock version                     Print version
 
 # --- nodes ---
 flock node ls                     List nodes
 flock node show <id>              Inspect a node
 flock node drain <id>             Drain a node (no new requests routed to it)
-flock node remove <id>            Forget a node
+flock node remove <id> [--yes]    Forget a node (prompts unless --yes)
 
 # --- models (non-sharded) ---
-flock model search <query>        Search catalog
-flock model ls                    List installed models
-flock model add <id>              Install a model (auto-delegates if sharded)
-flock model info <id>             Full details for one catalog model
-flock model remove <id>           Uninstall a model
+flock model search [q] [--sort=released] [--since YYYY-MM-DD] [--json]
+                                  Search catalog with optional date filters
+flock model ls [--json]           List installed models
+flock model add <id> [--force] [--dry-run]
+                                  Install a model. --dry-run previews size/RAM/
+                                  engine/ETA without pulling weights.
+flock model info <id> [--json]    Full details for one catalog model
+flock model remove <id> [--yes]   Uninstall a model (prompts unless --yes)
 
 # --- sharded models (one model split across N machines) ---
 flock shard create <model> [N]    Orchestrate a sharded model across N workers
 flock shard ls                    List shards across all sharded models
-flock shard remove <model>        Tear down a sharded model
+flock shard remove <model> [--yes]  Tear down a sharded model (prompts unless --yes)
 
 # --- API keys / tokens ---
 flock token create [name]         Issue an API key (--admin, --node)
 flock token ls                    List API keys
 flock token revoke <id>           Revoke a key
 
-# --- observability (CLI new in v0.4 — was UI-only before) ---
-flock usage [--limit N] [--user X]   Show recent inference usage records
-flock audit [--limit N] [--actor X]  Show recent admin audit log entries
+# --- observability ---
+flock usage [--limit N] [--user X] [--summary] [--json]
+                                  Recent inference records, or aggregate summary
+                                  (top models, p50/p95/p99, error rate, sparkline)
+flock audit [--limit N] [--actor X] [--summary] [--json]
+                                  Recent admin audit entries, or top-actors/top-actions
+                                  summary
 
-# --- config (CLI new in v0.4) ---
+# --- config ---
 flock config show [--json]        Show effective runtime config (secrets redacted)
 flock config path                 Print config file path
 flock config edit                 Print the editor command for the config file
 ```
+
+Output is colored when stdout is a TTY. Set `NO_COLOR=1` (or `FLOCK_NO_COLOR=1`) to disable. Top-level subcommand typos get a "did you mean ..." suggestion via Damerau-Levenshtein over the registered subcommand list.
 
 ---
 
@@ -1202,18 +1237,22 @@ The UI is shipped embedded in the Go binary via `//go:embed`. It is *not* a sepa
 
 All admin actions are also doable via CLI — see the [CLI reference](#cli-reference).
 
+Persistent top-bar chips (every view) show: role (leader/worker), engine reachability, node count, model count — polled every 5 s. Most tabs auto-refresh every 5 s while visible (pauses when the browser tab is hidden).
+
 | Tab | Capabilities |
 |---|---|
-| **Dashboard** | Cluster summary: nodes, models, recent request count, tokens served, copy-paste curl example with your admin key |
-| **Nodes** | List + status; **Add node** wizard generates a join token; per-row **drain** and **remove** buttons |
-| **Models** | List installed models; **catalog picker** dropdown to install a new one; per-row **remove** button (auto-handles sharded teardown) |
+| **Dashboard (home)** | 4 KPI cards (nodes, models, requests, tokens served); latency card with p50/p95/p99; tier-colored error-rate card; top-model card; full-width SVG sparkline of requests-per-minute over the last 60 minutes; recent-activity strip (last 6 requests with outcome badges); copy-paste curl example |
+| **Nodes** | List + status; **Add a worker** modal generates a one-time node-scope token and shows both an install-and-join curl one-liner and a `flock join` command for boxes that already have the binary; per-row **drain** and **remove** with confirmation |
+| **Models** | Installed models table; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button); per-row **remove** button with confirmation (auto-handles sharded teardown) |
 | **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
 | **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
-| **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome |
-| **Audit** | Recent admin actions with actor + action + target |
+| **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome (live polling) |
+| **Audit** | Recent admin actions with actor + action + target (live polling) |
 | **Settings** | Read-only effective config with secrets redacted; instructions for editing `~/.flock/config.yaml` and the env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `FLOCK_*`) |
 
-## CLI vs UI parity (v0.4)
+Mutating actions surface results via a toast notification (bottom-right, 3 s auto-dismiss) instead of inline error sprawl.
+
+## CLI vs UI parity
 
 Every cluster action is available both ways. Pick whichever fits your workflow:
 
@@ -1297,7 +1336,7 @@ Ollama is a great single-node inference engine. Flock is the *orchestration laye
 vLLM is a single-node inference server. Flock orchestrates vLLM (and others) across your fleet.
 
 **How is this different from exo?**
-exo is the closest project conceptually. Flock differs by: (1) Anthropic-API compatibility for Claude Code, (2) explicit hybrid local+vendor routing, (3) multi-tenant API keys / quotas / OIDC, (4) embedded UI and observability stack, (5) Go single-binary install.
+exo is the closest project conceptually. Flock differs by: (1) Anthropic-API compatibility for Claude Code, (2) explicit hybrid local+vendor routing, (3) multi-tenant API keys / quotas / audit log (OIDC planned), (4) embedded UI and observability stack, (5) Go single-binary install.
 
 **Does Flock train models?**
 No. Use Axolotl / Unsloth / torchtune for training. Bring back a LoRA adapter; Flock will serve it.
@@ -1312,7 +1351,7 @@ Not initially. The product is the software you run.
 Yes — set `mesh.tailnet_name` and `mesh.auth_key` to your tailnet. Otherwise Flock spins up a dedicated tailnet for the cluster.
 
 **Does Flock support AMD GPUs?**
-Linux + ROCm via vLLM-ROCm is on the roadmap (v1.0).
+Linux + ROCm via vLLM-ROCm is on the roadmap.
 
 **Can I run this on Windows?**
 Workers no (no MLX, no native vLLM). Leader/CLI yes via WSL2. Native Windows isn't a near-term priority.

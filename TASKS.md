@@ -4,9 +4,9 @@ Concrete task breakdown for the team building Flock. Each milestone ships a usab
 
 For user-facing docs see [README.md](README.md). For design rationale see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current shipped state (v0.4)
+## Current shipped state
 
-**Verified build**: `go build ./cmd/flock` clean on go 1.26 / darwin-arm64. `go vet ./...` clean. `flock up` boots, prints admin key, gateway responds.
+**Verified build**: `go build ./cmd/flock` clean on go 1.25 / darwin-arm64. `go vet ./...` clean. `flock up` boots, prints admin key, gateway responds.
 
 - **M0 — foundations**: ✅ done.
 - **M1 — single-node MVP**: ✅ done. CLI, OpenAI API + streaming, Ollama driver, hardware detect, catalog, install.sh. Web UI shipped as a single embedded HTML page (Tailwind via CDN) rather than the Next.js scaffold originally planned.

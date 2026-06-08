@@ -8,7 +8,7 @@ For everything else, the goal of this doc is to get you to a green `make check` 
 
 ## Prerequisites
 
-- **Go 1.22+** — `go version` to check.
+- **Go 1.25+** — `go version` to check.
 - **A running Ollama** — `brew install --cask ollama` on macOS, `curl -fsSL https://ollama.com/install.sh | sh` on Linux. The dev loop assumes Ollama at `http://127.0.0.1:11434`.
 - That's it. No Docker, no Python, no Node — the web UI is a single embedded HTML file compiled into the binary.
 
