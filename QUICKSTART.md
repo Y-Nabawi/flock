@@ -217,7 +217,7 @@ Once you've confirmed it works:
 flock invite hadi --quota 100000
 ```
 
-This creates a user-scope token for `hadi` (capped at 100k tokens/day) and prints a paste-into-Slack markdown card with config snippets for all 10 supported clients. Your teammate copies the snippet for the tool they use → they're talking to your hardware.
+This creates a user-scope token for `hadi` (capped at 100k tokens/day) and prints a paste-into-Slack markdown card with config snippets for every supported client (Claude Code, Cursor, Aider, Continue, Zed, Cline, Qwen-Code, **Hermes Agent**, **OpenClaw**, OpenAI SDK, Anthropic SDK, curl). Your teammate copies the snippet for the tool they use → they're talking to your hardware.
 
 The same flow works in the dashboard: **Tokens → + Invite teammate**.
 
@@ -456,7 +456,7 @@ You set three env vars to route Claude Code through Flock. The fastest way back:
 flock disconnect claude-code
 ```
 
-This prints the exact `unset` + `export` commands you need (and works for any of the 10 supported clients — `flock disconnect --list`). Paste what it prints, and you're back on `api.anthropic.com`.
+This prints the exact `unset` + `export` commands you need (works for every client `flock connect` supports — see `flock disconnect --list`). Paste what it prints, and you're back on `api.anthropic.com`.
 
 Manually, it's just unsetting the three env vars:
 

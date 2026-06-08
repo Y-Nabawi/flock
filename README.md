@@ -905,9 +905,11 @@ You have **three ways** to wire up a tool: the CLI, the dashboard, or copy-paste
 ### Fastest: `flock connect <client>`
 
 ```bash
-flock connect claude-code                          # prints env vars, pre-filled with your URL + token
-flock connect cursor                               # prints Cursor settings, pre-filled
-flock connect --list                               # supported clients today
+flock connect claude-code                          # Anthropic-shape: Claude Code, qwen-code, hermes
+flock connect cursor                               # OpenAI-shape: Cursor, Aider, Zed, OpenClaw, …
+flock connect hermes                               # Nous Research's CLI agent w/ persistent memory
+flock connect openclaw                             # open-source OpenAI-compatible coding agent
+flock connect --list                               # full client roster (12 today)
 
 # Overrides
 flock connect cursor --model qwen-coder-14b        # suggest a specific model
@@ -915,6 +917,8 @@ flock connect aider --base-url https://flock.lan   # override gateway URL
 FLOCK_TOKEN=sk-orc-… flock connect aider           # use a non-default token
 flock connect aider --token sk-orc-…               # same, via flag
 ```
+
+Anything that speaks OpenAI or Anthropic's API shape connects with one line. The full roster today: **claude-code**, **cursor**, **aider**, **continue**, **zed**, **cline**, **qwen-code**, **hermes**, **openclaw**, **openai-sdk**, **anthropic-sdk**, **curl**.
 
 Token comes from `--token`, then `$FLOCK_TOKEN`, then `~/.flock/admin.key` (written when you ran `flock up`). Base URL comes from `--base-url`, then `external_url` in `~/.flock/config.yaml`, then `http://localhost:<listen>`.
 

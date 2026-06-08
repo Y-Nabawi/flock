@@ -119,6 +119,41 @@ export ANTHROPIC_API_KEY=sk-ant-...
 qwen-code --help
 `,
 
+	"hermes": `# Hermes Agent reads the same Anthropic env vars as Claude Code.
+# Reverse the Flock override:
+unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_AUTH_TOKEN
+unset ANTHROPIC_MODEL
+
+# Hermes also caches per-session state in ~/.hermes/. The cached config
+# is keyed by base_url, so it'll refresh on next run; you can also blow
+# away the session if you want a clean slate:
+#   rm -rf ~/.hermes/sessions/<project>
+
+# Point it at OpenRouter / Anthropic / a local model however you prefer:
+export ANTHROPIC_API_KEY=sk-ant-...   # vendor
+# or just rerun ` + "`hermes`" + ` and pick a provider in the first prompt.
+`,
+
+	"openclaw": `# OpenClaw reads its endpoint from config.yaml (or .env). Reverse by
+# editing the file you wrote when you ran ` + "`flock connect openclaw`" + `:
+#
+#   # before
+#   base_url: http://your-flock-host:8080/v1
+#   api_key:  sk-orc-...
+#   model:    qwen-coder-14b
+#
+#   # after — delete those lines, OpenClaw falls back to its defaults
+#   # (OpenAI public API + $OPENAI_API_KEY) or whatever provider you set.
+
+# If you used env vars instead:
+unset OPENAI_BASE_URL
+unset OPENAI_API_KEY
+unset OPENCLAW_MODEL
+
+export OPENAI_API_KEY=sk-...   # then OpenClaw talks to api.openai.com
+`,
+
 	"openai-sdk": `# If you set base_url in your Python/JS code, remove that argument:
 #
 #   # before

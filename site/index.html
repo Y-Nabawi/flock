@@ -792,6 +792,8 @@ FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up</pre>
                 <div class="font-medium text-slate-700 mb-1">One command per tool</div>
                 <pre class="font-mono text-xs bg-slate-900 text-emerald-300 p-3 rounded overflow-x-auto whitespace-pre">flock connect claude-code
 flock connect cursor
+flock connect hermes
+flock connect openclaw
 flock connect --list</pre>
                 <p class="text-xs text-slate-500 mt-1">Prints config with your base URL + token already substituted. Read from $FLOCK_TOKEN or ~/.flock/admin.key.</p>
               </div>
@@ -1240,8 +1242,8 @@ claude</pre>
             <pre class="mt-3 font-mono text-xs text-slate-700 leading-relaxed bg-slate-50 p-3 rounded border overflow-x-auto">flock disconnect claude-code
 
 # prints the exact unset + export
-# commands — same for any of the
-# 10 supported clients.</pre>
+# commands — same for every
+# supported client.</pre>
             <p class="mt-3 text-xs text-slate-500">Manually: <code class="font-mono text-xs">unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL</code>, then <code class="font-mono text-xs">export ANTHROPIC_API_KEY=sk-ant-...</code>. Or just open a fresh terminal — Claude Code defaults to <code class="font-mono text-xs">api.anthropic.com</code> when the BASE_URL var isn't set.</p>
           </div>
 
