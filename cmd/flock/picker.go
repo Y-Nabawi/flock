@@ -39,7 +39,7 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 	if err != nil {
 		return ""
 	}
-	defer term.Restore(inFD, oldState)
+	defer func() { _ = term.Restore(inFD, oldState) }()
 
 	out := os.Stderr
 	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
