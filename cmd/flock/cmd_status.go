@@ -110,8 +110,11 @@ func cmdStatus(args []string) {
 		return
 	}
 	fmt.Println()
-	fmt.Println("  Installed models:")
+	fmt.Println(bold("  Installed models:"))
 	for _, m := range ms {
-		fmt.Printf("    %-22s  status=%s  source=%s\n", m.CatalogID, m.Status, m.Source)
+		fmt.Printf("    %s  status=%s  source=%s\n",
+			padCyan(m.CatalogID, 22),
+			padStatus(m.Status, 0),
+			dim(m.Source))
 	}
 }

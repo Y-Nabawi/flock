@@ -60,9 +60,9 @@ func main() {
 	case "help", "--help", "-h":
 		printUsage(os.Stdout)
 	default:
-		fmt.Fprintf(os.Stderr, "flock: unknown command %q\n", cmd)
+		fmt.Fprintf(os.Stderr, "%s unknown command %q\n", red("flock:"), cmd)
 		if guess := suggestSubcommand(cmd); guess != "" {
-			fmt.Fprintf(os.Stderr, "\nDid you mean %q?\n", guess)
+			fmt.Fprintf(os.Stderr, "\nDid you mean %s?\n", cyan(guess))
 		}
 		fmt.Fprintln(os.Stderr)
 		printUsage(os.Stderr)

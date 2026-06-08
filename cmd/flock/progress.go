@@ -117,12 +117,14 @@ func (p *progressBar) update(status string, completed, total int64) {
 			if filled > barWidth {
 				filled = barWidth
 			}
-			bar = "[" + strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled) + "]"
+			bar = "[" + green(strings.Repeat("█", filled)) + dim(strings.Repeat("░", barWidth-filled)) + "]"
 		}
 	}
 
 	line := left + bar + right
-	if len(line) > p.width {
+	// Only truncate when colors are off — otherwise ANSI escape bytes
+	// inflate len(line) and we'd slice into an escape sequence.
+	if !colorEnabled && len(line) > p.width {
 		line = line[:p.width]
 	}
 	fmt.Fprintf(os.Stderr, "\r\x1b[K%s", line)

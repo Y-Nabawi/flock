@@ -239,7 +239,7 @@ func removePID(cfg *config.Config) {
 }
 
 func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "flock: "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "%s "+format+"\n", append([]any{red("flock:")}, args...)...)
 	os.Exit(1)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -65,17 +66,32 @@ func cmdUsage(args []string) {
 		return
 	}
 
-	fmt.Printf("%-19s %-14s %-22s %-12s %5s %5s %7s %s\n",
-		"TIME", "USER/KEY", "MODEL", "PROTOCOL", "PROMPT", "COMPL", "MS", "OUTCOME")
+	fmt.Printf("%s %s %s %s %s %s %s %s\n",
+		bold(fmt.Sprintf("%-19s", "TIME")),
+		bold(fmt.Sprintf("%-14s", "USER/KEY")),
+		bold(fmt.Sprintf("%-22s", "MODEL")),
+		bold(fmt.Sprintf("%-12s", "PROTOCOL")),
+		bold(fmt.Sprintf("%5s", "PROMPT")),
+		bold(fmt.Sprintf("%5s", "COMPL")),
+		bold(fmt.Sprintf("%7s", "MS")),
+		bold("OUTCOME"))
 	for _, r := range filtered {
 		ts := parseTime(r["TS"])
-		fmt.Printf("%-19s %-14s %-22s %-12s %5v %5v %7v %s\n",
-			ts.Format("2006-01-02 15:04:05"),
+		outcome := fmt.Sprint(r["Outcome"])
+		coloredOutcome := outcome
+		switch strings.ToLower(outcome) {
+		case "ok", "success", "completed":
+			coloredOutcome = green(outcome)
+		case "error", "failed", "timeout", "cancelled":
+			coloredOutcome = red(outcome)
+		}
+		fmt.Printf("%s %-14s %-22s %-12s %5v %5v %7v %s\n",
+			dim(ts.Format("2006-01-02 15:04:05")),
 			truncStr(fmt.Sprint(firstNonEmpty(r["UserID"], r["APIKeyID"])), 14),
 			truncStr(fmt.Sprint(r["Model"]), 22),
 			fmt.Sprint(r["Protocol"]),
 			r["PromptTokens"], r["CompletionTokens"], r["LatencyMS"],
-			r["Outcome"])
+			coloredOutcome)
 	}
 }
 

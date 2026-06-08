@@ -365,13 +365,39 @@ func modelLs(asJSON bool) {
 		return
 	}
 	if len(ms) == 0 {
-		fmt.Println("(no models installed — try `flock model add llama-3.2-3b`)")
+		fmt.Println(dim("(no models installed — try `flock model add llama-3.2-3b`)"))
 		return
 	}
-	fmt.Printf("%-22s %-10s %-30s %s\n", "ID", "STATUS", "SOURCE", "INSTALLED")
+	fmt.Printf("%s %s %s %s\n",
+		bold(fmt.Sprintf("%-22s", "ID")),
+		bold(fmt.Sprintf("%-10s", "STATUS")),
+		bold(fmt.Sprintf("%-30s", "SOURCE")),
+		bold("INSTALLED"))
 	for _, m := range ms {
-		fmt.Printf("%-22s %-10s %-30s %s\n", m.CatalogID, m.Status, m.Source, m.InstalledAt.Format(time.RFC3339))
+		fmt.Printf("%s %s %-30s %s\n",
+			padCyan(m.CatalogID, 22),
+			padStatus(m.Status, 10),
+			m.Source,
+			dim(m.InstalledAt.Format(time.RFC3339)))
 	}
+}
+
+// padStatus colors the status word by tier: green=ready/ok, yellow=pulling/pending,
+// red=error/failed. Pads to width `n` outside the color escape so columns align.
+func padStatus(s string, n int) string {
+	colored := s
+	switch strings.ToLower(s) {
+	case "ready", "ok", "running", "active":
+		colored = green(s)
+	case "pulling", "pending", "starting", "downloading":
+		colored = yellow(s)
+	case "error", "failed", "down", "draining":
+		colored = red(s)
+	}
+	if len(s) >= n {
+		return colored
+	}
+	return colored + strings.Repeat(" ", n-len(s))
 }
 
 func modelRemove(id string) {
@@ -462,7 +488,14 @@ func modelSearch(query string, sortReleased bool, since string, asJSON bool) {
 		return
 	}
 
-	fmt.Printf("%-26s %-32s %7s %5s %-22s %-10s %s\n", "ID", "NAME", "SIZE", "RAM", "CAPABILITIES", "RELEASED", "INSTALLED")
+	fmt.Printf("%s %s %s %s %s %s %s\n",
+		bold(fmt.Sprintf("%-26s", "ID")),
+		bold(fmt.Sprintf("%-32s", "NAME")),
+		bold(fmt.Sprintf("%7s", "SIZE")),
+		bold(fmt.Sprintf("%5s", "RAM")),
+		bold(fmt.Sprintf("%-22s", "CAPABILITIES")),
+		bold(fmt.Sprintf("%-10s", "RELEASED")),
+		bold("INSTALLED"))
 	for _, e := range rows {
 		size := "?"
 		if e.SizeBytes > 0 {
@@ -474,17 +507,37 @@ func modelSearch(query string, sortReleased bool, since string, asJSON bool) {
 		}
 		mark := ""
 		if installed[e.ID] {
-			mark = "✓"
+			mark = green("✓")
 		}
 		released := e.Released
 		if released == "" {
 			released = "—"
 		}
-		fmt.Printf("%-26s %-32s %7s %4dG %-22s %-10s %s\n",
-			e.ID, truncStr(e.DisplayName, 32), size, e.Hardware.MinRAMGB, caps, released, mark)
+		fmt.Printf("%s %-32s %7s %4dG %-22s %s %s\n",
+			padCyan(e.ID, 26),
+			truncStr(e.DisplayName, 32), size, e.Hardware.MinRAMGB, caps,
+			padDim(released, 10),
+			mark)
 	}
 	fmt.Println()
-	fmt.Println("Tip: `flock model info <id>` for full details on one model. `flock model add <id>` to install.")
+	fmt.Println(dim("Tip: `flock model info <id>` for full details on one model. `flock model add <id>` to install."))
+}
+
+// padCyan returns the colored string followed by trailing spaces so the
+// visual column width is `n`. Using fmt's "%-26s" directly with a
+// colored string would count the ANSI escape bytes as visible width.
+func padCyan(s string, n int) string {
+	if len(s) >= n {
+		return cyan(s)
+	}
+	return cyan(s) + strings.Repeat(" ", n-len(s))
+}
+
+func padDim(s string, n int) string {
+	if len(s) >= n {
+		return dim(s)
+	}
+	return dim(s) + strings.Repeat(" ", n-len(s))
 }
 
 // parseModelSearchArgs extracts the query plus `--sort=released` and

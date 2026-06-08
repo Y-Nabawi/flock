@@ -62,13 +62,17 @@ func cmdAudit(args []string) {
 		return
 	}
 
-	fmt.Printf("%-19s %-16s %-40s %s\n", "TIME", "ACTOR", "ACTION", "TARGET")
+	fmt.Printf("%s %s %s %s\n",
+		bold(fmt.Sprintf("%-19s", "TIME")),
+		bold(fmt.Sprintf("%-16s", "ACTOR")),
+		bold(fmt.Sprintf("%-40s", "ACTION")),
+		bold("TARGET"))
 	for _, r := range filtered {
 		ts := parseTime(r["TS"])
-		fmt.Printf("%-19s %-16s %-40s %s\n",
-			ts.Format("2006-01-02 15:04:05"),
+		fmt.Printf("%s %-16s %-40s %s\n",
+			dim(ts.Format("2006-01-02 15:04:05")),
 			truncStr(fmt.Sprint(r["Actor"]), 16),
 			truncStr(fmt.Sprint(r["Action"]), 40),
-			fmt.Sprint(r["Target"]))
+			cyan(fmt.Sprint(r["Target"])))
 	}
 }
