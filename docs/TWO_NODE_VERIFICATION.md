@@ -4,6 +4,22 @@ Flock's cross-node routing has automated coverage via `internal/controlplane/two
 
 Once you've walked through this checklist successfully **on two physical machines**, you can remove the "not yet tested with two physical machines" caveat from README:155.
 
+## tl;dr — run the smoke script
+
+If you've already got a leader + worker running and just want to confirm the wire path works, skip to:
+
+```bash
+LEADER=http://leader.lan:8080 \
+WORKER=http://worker.lan:8081 \
+ADMIN_KEY=sk-orc-... \
+MODEL=llama-3.2-3b \
+  ./scripts/two-node-smoke.sh
+```
+
+Six checks in under 30 seconds: leader healthz, admin auth, node count ≥ 2, worker healthz (direct), model registered, real chat round-trip. Exit codes 1–5 each map to a specific failure mode (asymmetric firewall, missing model, etc.) so CI / on-call playbooks can branch on them.
+
+The full walkthrough below is for first-time setup or when the smoke script fails and you need to bisect.
+
 ## Pre-flight
 
 - Two machines on the same LAN. macOS / Linux either way. Apple Silicon + Linux+NVIDIA is the most interesting mix.

@@ -153,7 +153,7 @@ claude
 
 | | |
 |---|---|
-| **Status** | Alpha — build-verified on macOS/arm64; single-node verified end-to-end with curl; multi-node routing has in-process E2E coverage (`internal/controlplane/two_node_e2e_test.go`); real two-machine verification is the [10-min manual checklist](docs/TWO_NODE_VERIFICATION.md) |
+| **Status** | Alpha — build-verified on macOS/arm64 + ubuntu-24.04; single-node verified end-to-end with curl; multi-node routing has in-process E2E coverage (`internal/controlplane/two_node_e2e_test.go`); real two-machine verification is the [30-sec smoke script](scripts/two-node-smoke.sh) + [manual walkthrough](docs/TWO_NODE_VERIFICATION.md) |
 | **License** | Apache 2.0 |
 | **Language** | Go (orchestrator + embedded HTML UI) |
 | **Platforms** | macOS (Apple Silicon), Linux (x86_64, arm64) |
