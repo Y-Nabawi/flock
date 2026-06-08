@@ -1100,6 +1100,20 @@ async function renderSettings() {
               </div>`;
     };
 
+    // statusRow: a single line for the egress/observability cards. Color
+    // indicates whether the feature is wired or not.
+    const statusRow = (label, status) => {
+      const active = !status.startsWith("disabled");
+      const color = active ? "text-emerald-700" : "text-slate-500";
+      const dot = active
+        ? `<span class="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>`
+        : `<span class="inline-block w-2 h-2 rounded-full bg-slate-300 mr-2"></span>`;
+      return `<div class="py-1.5 border-b border-slate-100 last:border-0">
+                <div class="text-sm font-medium text-slate-700">${dot}${label}</div>
+                <div class="text-xs ${color} pl-4">${status}</div>
+              </div>`;
+    };
+
     root.innerHTML = `
       <h2 class="text-lg font-semibold mb-4">Settings</h2>
 
@@ -1109,6 +1123,19 @@ async function renderSettings() {
         ${rows("Router & fallback", cfg.router)}
         ${rows("Storage", cfg.storage)}
         ${rows("Auth", cfg.auth)}
+
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-sm font-semibold mb-2">Observability</div>
+          ${statusRow("OpenTelemetry / OTLP traces", (cfg.observability || {}).otlp_status || "disabled")}
+          <div class="text-xs text-slate-500 mt-2">Set <span class="code">FLOCK_OTLP_ENDPOINT</span> to a collector URL (e.g. <span class="code">http://localhost:4318</span>) and Flock emits spans for every request: <span class="code">http.request → router.Chat → router.Chat.attempt → ollama.Chat</span>. Empty endpoint = no-op (zero overhead). W3C <span class="code">traceparent</span> propagation is always on.</div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded p-4">
+          <div class="text-sm font-semibold mb-2">Cloud egress (Bedrock + Vertex)</div>
+          ${statusRow("AWS Bedrock (anthropic.* via SigV4)", (cfg.egress || {}).bedrock_status || "disabled")}
+          ${statusRow("Google Vertex (ADC probe)", (cfg.egress || {}).vertex_status || "disabled")}
+          <div class="text-xs text-slate-500 mt-2">Bedrock signing uses the standard AWS credentials chain (env, shared config, instance role). Vertex uses Application Default Credentials (<span class="code">gcloud auth application-default login</span> / service account JSON / workload identity). Body translation for non-Anthropic Bedrock families and for Vertex Gemini lands in v0.7.</div>
+        </div>
       </div>
 
       <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
@@ -1116,19 +1143,22 @@ async function renderSettings() {
         <div>${cfg.edit_hint || "Edit ~/.flock/config.yaml and restart flock."}</div>
         <div class="mt-2">Vendor fallback keys come from env vars:</div>
         <pre class="text-xs bg-amber-100 mt-1 p-2 rounded">ANTHROPIC_API_KEY=…   # enables claude-* via /v1/messages
-OPENAI_API_KEY=…      # enables gpt-* via /v1/chat/completions</pre>
+OPENAI_API_KEY=…      # enables gpt-* via /v1/chat/completions
+FLOCK_BEDROCK_REGION=us-east-1   # enables anthropic.* via Bedrock SigV4
+FLOCK_VERTEX_PROJECT=my-project  # wires Vertex ADC probe
+FLOCK_OTLP_ENDPOINT=http://localhost:4318   # exports traces</pre>
       </div>
 
       <div class="mt-4 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-900">
         <div class="font-semibold mb-1">🔒 Security model — LAN trust</div>
         <div class="space-y-2">
-          <div>Flock v0.4 assumes a <strong>trusted network</strong> (LAN or Tailscale). Specifically:</div>
+          <div>Flock assumes a <strong>trusted network</strong> (LAN or Tailscale). Specifically:</div>
           <ul class="list-disc list-inside space-y-1">
             <li><strong>User API keys</strong> (admin / user scope) are <em>hashed</em> (sha256) in the database — only the plaintext you see at creation time can be used.</li>
-            <li><strong>Worker tokens</strong> (the shared secret leader ↔ worker) are currently stored <strong>plaintext</strong> in <span class="code">nodes.worker_token</span>. Anyone with read access to the SQLite file on the leader can impersonate a worker.</li>
+            <li><strong>Worker tokens</strong> are still stored on the leader's SQLite. Since v0.5 they no longer travel on the wire — every leader ↔ worker call is signed via HMAC-SHA256 (5-min replay window). Set <span class="code">FLOCK_REJECT_BEARER=1</span> on workers to refuse the bearer-fallback path entirely once every leader is on v0.5+.</li>
             <li><strong>Worker HTTP servers</strong> bind only to the mesh address (LAN / tailnet IP), never 0.0.0.0. Network reachability is the first line of defense.</li>
           </ul>
-          <div>For hostile networks (public WiFi, untrusted VPC), run the cluster <strong>behind Tailscale</strong> or a similar zero-trust overlay until v0.5 lands HMAC-based mutual auth.</div>
+          <div>For hostile networks (public WiFi, untrusted VPC), still run the cluster <strong>behind Tailscale</strong> or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption.</div>
         </div>
       </div>
 

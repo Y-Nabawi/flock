@@ -654,15 +654,17 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
 // via a typo'd HTTP PUT.
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	type view struct {
-		Listen      string            `json:"listen"`
-		ExternalURL string            `json:"external_url"`
-		DataDir     string            `json:"data_dir"`
-		LogLevel    string            `json:"log_level"`
-		Engine      map[string]string `json:"engine"`
-		Router      map[string]any    `json:"router"`
-		Storage     map[string]string `json:"storage"`
-		Auth        map[string]any    `json:"auth"`
-		EditHint    string            `json:"edit_hint"`
+		Listen        string            `json:"listen"`
+		ExternalURL   string            `json:"external_url"`
+		DataDir       string            `json:"data_dir"`
+		LogLevel      string            `json:"log_level"`
+		Engine        map[string]string `json:"engine"`
+		Router        map[string]any    `json:"router"`
+		Storage       map[string]string `json:"storage"`
+		Auth          map[string]any    `json:"auth"`
+		Observability map[string]any    `json:"observability"`
+		Egress        map[string]any    `json:"egress"`
+		EditHint      string            `json:"edit_hint"`
 	}
 	v := view{
 		Listen:      s.cfg.Listen,
@@ -696,9 +698,49 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Auth: map[string]any{
 			"require_keys": s.cfg.Auth.RequireKeys,
 		},
+		Observability: map[string]any{
+			"otlp_endpoint": s.cfg.Observability.OTLPEndpoint,
+			"otlp_status":   otlpStatus(s.cfg.Observability.OTLPEndpoint),
+		},
+		Egress: map[string]any{
+			"bedrock_region":  s.cfg.Router.Fallback.BedrockRegion,
+			"bedrock_status":  bedrockStatus(s.cfg.Router.Fallback.BedrockRegion),
+			"vertex_project":  s.cfg.Router.Fallback.VertexProject,
+			"vertex_location": s.cfg.Router.Fallback.VertexLocation,
+			"vertex_status":   vertexStatus(s.cfg.Router.Fallback.VertexProject),
+		},
 		EditHint: "Edit " + s.cfg.DataDir + "/config.yaml or set ANTHROPIC_API_KEY / OPENAI_API_KEY / FLOCK_* env vars, then restart flock.",
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// otlpStatus returns a one-line operator-facing summary of the tracing
+// state — "disabled" if no endpoint, "configured" otherwise. We don't
+// probe the collector here because that would either block the request
+// or require a background prober; the operator already gets feedback
+// from "tracing enabled" log line at flock up.
+func otlpStatus(endpoint string) string {
+	if endpoint == "" {
+		return "disabled (set FLOCK_OTLP_ENDPOINT to a collector URL)"
+	}
+	return "configured → " + endpoint
+}
+
+// bedrockStatus mirrors otlpStatus shape for the Bedrock egress route.
+// "configured" here means: the routing pipe is wired AND SigV4 signing
+// is active for anthropic.* models. amazon.*/meta.*/mistral.* still 501.
+func bedrockStatus(region string) string {
+	if region == "" {
+		return "disabled (set FLOCK_BEDROCK_REGION to enable anthropic.* via SigV4)"
+	}
+	return "configured → region=" + region + ", SigV4 active for anthropic.* (other families v0.7)"
+}
+
+func vertexStatus(project string) string {
+	if project == "" {
+		return "disabled (set FLOCK_VERTEX_PROJECT to enable ADC auth probe)"
+	}
+	return "configured → project=" + project + ", ADC probe active (body translation v0.7)"
 }
 
 func redact(s string) string {
