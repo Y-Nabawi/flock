@@ -986,6 +986,16 @@ claude</pre>
           </div>
 
           <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">☁️ Bedrock + Vertex egress</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Set <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_BEDROCK_REGION</code> and <code>anthropic.*</code> model IDs are signed via real SigV4 (aws-sdk-go-v2). <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_VERTEX_PROJECT</code> wires the ADC auth probe for <code>gemini-*</code>. Body translation lands in v0.7.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
+            <div class="text-sm font-semibold mb-2">🔍 OTLP traces (end-to-end)</div>
+            <p class="text-sm text-slate-600 leading-relaxed">Set <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_OTLP_ENDPOINT</code> and get spans for every request: <code>http.request</code> → <code>router.Chat</code> → per-fallback-attempt → <code>ollama.Chat</code> with prompt + completion token counts. W3C <code>traceparent</code> propagation always on, even when export is off.</p>
+          </div>
+
+          <div class="border border-slate-200 rounded-lg p-5">
             <div class="text-sm font-semibold mb-2">♻️ Catalog fallback chains</div>
             <p class="text-sm text-slate-600 leading-relaxed">Declare <code class="font-mono text-xs bg-slate-100 px-1 rounded">fallback: [next-id, …]</code> in catalog YAML. Router silently retries on engine error / timeout. Transparent to clients; visible in audit log.</p>
           </div>
@@ -1534,30 +1544,39 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
 
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-6">
-            <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped (v0.4)</h3>
+            <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped (v0.6)</h3>
             <ul class="space-y-1.5 text-sm text-emerald-900">
               <li>• OpenAI + Anthropic API surface, streaming, tool use</li>
-              <li>• Ollama / vLLM / MLX / llama.cpp drivers</li>
+              <li>• Ollama / vLLM / MLX / llama.cpp drivers (single-node + RPC)</li>
               <li>• Per-user keys, quotas, audit, usage metering, Prometheus</li>
               <li>• Hybrid local + Anthropic/OpenAI fallback</li>
               <li>• Multi-node routing with heartbeat + placements (LAN mesh)</li>
-              <li>• Sharding auto-orchestration (rpc-server + coordinator)</li>
+              <li>• <strong>HMAC mutual auth</strong> for worker token (no plaintext on wire)</li>
+              <li>• Sharding auto-orchestration with <strong>shard crash auto-restart</strong></li>
+              <li>• <strong>Coordinator placement on the strongest worker</strong> (not just leader)</li>
+              <li>• <strong>Auto-distribution of GGUF weights</strong> from leader to shard hosts (sha256-verified)</li>
               <li>• Vision (image input on chat) + embeddings (Ollama path)</li>
-              <li>• Embedded web UI with full CLI parity (Connect, Playground, Nodes, Models, Shards, Tokens, Usage, Audit, Settings)</li>
-              <li>• Install one-liner + signed binaries</li>
+              <li>• Catalog fallback chains + hardware-floor refusal + license metadata (27 models)</li>
+              <li>• <strong>Bedrock SigV4 signing</strong> (anthropic.* family) + Vertex ADC probe</li>
+              <li>• <strong>OTLP traces end-to-end</strong>: HTTP → router → engine with token counts</li>
+              <li>• Reference Grafana dashboards (cluster, per-model, per-node)</li>
+              <li>• 18-client <code>flock connect</code> roster + Open WebUI desktop pairing</li>
+              <li>• Embedded web UI with full CLI parity</li>
+              <li>• Install one-liner + signed binaries + 2-node smoke script</li>
             </ul>
           </div>
 
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <h3 class="font-semibold text-blue-900 mb-3">→ Next (v0.5+)</h3>
+            <h3 class="font-semibold text-blue-900 mb-3">→ Next (v0.7+)</h3>
             <ul class="space-y-1.5 text-sm text-blue-900">
+              <li>• Bedrock streaming + non-Anthropic body shapes (amazon, meta, mistral)</li>
+              <li>• Vertex body translation (OpenAI/Anthropic → generateContent)</li>
+              <li>• OTLP child spans across vLLM / MLX / llamacpp drivers</li>
+              <li>• Latency-aware fallback (p95 TTFT trigger)</li>
+              <li>• Edge runtime packages (.deb / NAS .spk)</li>
               <li>• Tailscale (<code>tsnet</code>) mesh for NAT traversal + mTLS</li>
-              <li>• OIDC for web UI (paste-key auth today)</li>
-              <li>• HMAC-based worker token mutual auth</li>
-              <li>• Shard crash detection + auto-restart</li>
-              <li>• Coordinator placement on workers (not just leader)</li>
-              <li>• Auto-distribution of model weights to workers</li>
-              <li>• LoRA adapter loading</li>
+              <li>• LoRA adapter loading + live model migration</li>
+              <li>• Rerank (Cohere shape) + Anthropic extended thinking</li>
               <li>• ASR (Whisper) + TTS endpoints</li>
               <li>• Postgres backend for HA control plane</li>
               <li>• AMD ROCm path</li>
