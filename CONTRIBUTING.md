@@ -4,7 +4,7 @@ Thanks for your interest in contributing.
 
 If you're here to fix a typo or add a model to the catalog, you can skip the rest of this file — open a PR.
 
-For everything else, the goal of this doc is to get you to a green `make check` and a running cluster in under 30 minutes.
+For everything else, the goal of this doc is to get you to a green `make check` (or `make integration` for a stricter pre-push smoke) and a running cluster in under 30 minutes.
 
 ## Prerequisites
 
@@ -37,6 +37,8 @@ The Makefile is intentionally tiny. Every target maps to a single `go` invocatio
 | Target | What it runs |
 |---|---|
 | `make build` (default) | `go build -trimpath -o flock ./cmd/flock` |
+| `make fmt-check` | `gofmt -s -l .` — fails if any file would change |
+| `make integration` | `check` + `fmt-check` + binary smoke (`version`, `help`, `connect --list`) + drift tests. Pre-push sanity in ~10s. |
 | `make test` | `go test ./...` |
 | `make lint` | `go vet ./...` |
 | `make check` | lint + test + build, in order. **This is what every PR must pass.** |
