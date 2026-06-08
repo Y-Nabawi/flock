@@ -35,6 +35,13 @@ type Entry struct {
 	// model's HuggingFace LICENSE file.
 	LicenseURL string `yaml:"license_url,omitempty" json:"license_url,omitempty"`
 
+	// Released is the model's public release date in YYYY-MM-DD form.
+	// Lets users sort/filter the catalog by recency (`flock model search`
+	// shows it; `flock model info` renders the full date). Approximate
+	// is fine — use the month if a precise day isn't known, e.g.
+	// "2024-09-01" rather than guessing.
+	Released string `yaml:"released,omitempty" json:"released,omitempty"`
+
 	// Fallback is an ordered list of catalog IDs to try when the primary
 	// model can't serve a request (engine down, model not loaded, 503,
 	// timeout, etc.). Tried in order; the first that succeeds wins.

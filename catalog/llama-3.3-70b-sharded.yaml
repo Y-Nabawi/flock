@@ -26,6 +26,7 @@ hardware:
 tags: [sharded, large, restricted-license]
 license: llama-3-community
 license_url: https://www.llama.com/llama3_3/license/
+released: 2024-12-06
 sharding:
   required: true
   default_shards: 2

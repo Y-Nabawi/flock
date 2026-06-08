@@ -31,6 +31,7 @@ hardware:
 tags: [moe, mamba, sharded, frontier, nvidia, long-context, restricted-license]
 license: nvidia-open
 license_url: https://huggingface.co/nvidia/Nemotron-3-Ultra/blob/main/LICENSE
+released: 2026-01-15
 sharding:
   required: true
   default_shards: 4

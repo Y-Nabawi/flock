@@ -375,6 +375,9 @@ func modelInfo(id string) {
 		}
 		fmt.Printf("  %sLicense%s        %s\n", bold, reset, licenseLine)
 	}
+	if entry.Released != "" {
+		fmt.Printf("  %sReleased%s       %s\n", bold, reset, entry.Released)
+	}
 	if len(entry.Fallback) > 0 {
 		fmt.Printf("  %sFallback%s       %s\n",
 			bold, reset, strings.Join(entry.Fallback, " → "))

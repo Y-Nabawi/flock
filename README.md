@@ -63,7 +63,7 @@
       │   • Mac Studio · Mac Mini                    • Claude (Anthropic)    │
       │   • Linux + RTX GPU                          • GPT, o3, o4 (OpenAI)  │
       │                                                                      │
-      │   27 curated catalog models (Qwen 3.6,        Each request routed   │
+      │   37 curated catalog models (Qwen 3.6,        Each request routed   │
       │   gpt-oss, Llama 4, Gemma 4, DeepSeek V4,     to EITHER your hard-  │
       │   Kimi K2.6, Nemotron 3 Ultra, vision +       ware OR a vendor —    │
       │   embedding models)                           you pay vendors only  │
@@ -447,7 +447,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 > **For the complete per-model walkthrough** (system requirements, performance per platform, install + use snippets for every client) see **[MODELS.md](MODELS.md)**.
 
-Flock ships a curated catalog of **27 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag). See [catalog/README.md](catalog/README.md) for the YAML schema if you want to PR an entry.
+Flock ships a curated catalog of **37 open-weight models** in `catalog/*.yaml`, spanning everything from 1 B edge models to 1 T-parameter sharded frontier MoE. Any other model also works via `flock model add hf:<owner>/<repo>` (HuggingFace direct) or `flock model add ollama:<name>` (any Ollama-pullable tag). See [catalog/README.md](catalog/README.md) for the YAML schema if you want to PR an entry.
 
 > 📋 **Picker table — what to install** — full table with size, RAM, chat/code/reasoning/vision/audio/context ratings and license per model: **[MODELS.md → Picker table](MODELS.md#-picker-table--what-to-install)**.
 

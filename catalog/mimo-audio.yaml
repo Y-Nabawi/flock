@@ -1,0 +1,16 @@
+id: mimo-audio
+display_name: Xiaomi MiMo-Audio 7B (speech + audio understanding)
+source:
+  type: ollama
+  ollama_name: mimo-audio:7b
+size_bytes: 4800000000
+quant: q4_k_m
+context_window: 32768
+capabilities: [chat, audio]
+recommended_engines: [ollama, vllm, llamacpp]
+hardware:
+  min_ram_gb: 8
+tags: [audio, small, xiaomi, apache-2.0]
+license: apache-2.0
+license_url: https://huggingface.co/XiaomiMiMo/MiMo-Audio-7B/blob/main/LICENSE
+released: 2026-01-20

@@ -28,6 +28,7 @@ hardware:
 tags: [moe, sharded, frontier, agentic]
 license: mit
 license_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/main/LICENSE
+released: 2026-04-09
 sharding:
   required: true
   default_shards: 2

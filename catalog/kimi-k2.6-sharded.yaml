@@ -26,6 +26,7 @@ hardware:
 tags: [moe, sharded, frontier, coding, agentic]
 license: mit
 license_url: https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/LICENSE
+released: 2026-05-15
 sharding:
   required: true
   default_shards: 4

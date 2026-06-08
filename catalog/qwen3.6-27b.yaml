@@ -13,6 +13,7 @@ hardware:
 tags: [general, top-pick, swe-bench]
 license: apache-2.0
 license_url: https://huggingface.co/Qwen/Qwen3.6-27B/blob/main/LICENSE
+released: 2026-03-22
 # If qwen3.6-27b is unavailable on this cluster (model not loaded, node
 # offline, engine down), the router falls back to these models in order.
 # Operators see the fallback in flock up's stderr + audit log; clients

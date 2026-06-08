@@ -28,6 +28,7 @@ hardware:
 tags: [moe, sharded, frontier, agentic, multimodal, vlm]
 license: apache-2.0
 license_url: https://huggingface.co/stepfun-ai/Step-3.7-Flash/blob/main/LICENSE
+released: 2026-02-19
 sharding:
   required: true
   default_shards: 2
