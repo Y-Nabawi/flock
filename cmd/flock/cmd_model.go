@@ -47,29 +47,117 @@ func cmdModel(args []string) {
 	}
 	switch args[0] {
 	case "add":
-		if len(args) < 2 {
-			die("usage: flock model add <id> [--force]")
-		}
 		id, force := parseModelAddArgs(args[1:])
+		if id == "" || !catalogHasID(id) {
+			id = pickCatalogID("Pick a model to install:", id)
+			if id == "" {
+				die("no model selected")
+			}
+		}
 		modelAdd(id, force)
 	case "ls", "list":
 		modelLs()
 	case "remove", "rm":
-		if len(args) < 2 {
-			die("usage: flock model remove <id>")
+		id := ""
+		if len(args) >= 2 {
+			id = args[1]
 		}
-		modelRemove(args[1])
+		if id == "" || !installedHasID(id) {
+			id = pickInstalledID("Pick an installed model to remove:", id)
+			if id == "" {
+				die("no model selected")
+			}
+		}
+		modelRemove(id)
 	case "search":
 		query, sortReleased, since := parseModelSearchArgs(args[1:])
 		modelSearch(query, sortReleased, since)
 	case "info":
-		if len(args) < 2 {
-			die("usage: flock model info <id>")
+		id := ""
+		if len(args) >= 2 {
+			id = args[1]
 		}
-		modelInfo(args[1])
+		if id == "" || !catalogHasID(id) {
+			id = pickCatalogID("Pick a model to inspect:", id)
+			if id == "" {
+				die("no model selected")
+			}
+		}
+		modelInfo(id)
 	default:
 		die("unknown subcommand: model %s (run `flock model --help` for usage)", args[0])
 	}
+}
+
+// catalogHasID is a cheap membership check used to decide whether to fall
+// through to the picker.
+func catalogHasID(id string) bool {
+	if id == "" {
+		return false
+	}
+	cfg := loadConfigOrExit()
+	cat, err := models.LoadCatalog(cfg.CatalogDir)
+	if err != nil {
+		return false
+	}
+	return models.FindByID(cat, id) != nil
+}
+
+// installedHasID returns true if `id` is currently installed in the store.
+func installedHasID(id string) bool {
+	if id == "" {
+		return false
+	}
+	cfg := loadConfigOrExit()
+	st, err := store.OpenSQLite(cfg.Storage.DSN)
+	if err != nil {
+		return false
+	}
+	defer st.Close()
+	m, _ := st.Models().Get(context.Background(), id)
+	return m != nil
+}
+
+// pickCatalogID launches the interactive picker over all catalog entries.
+// Returns the chosen ID or "" if the user cancelled / stdin isn't a TTY.
+func pickCatalogID(prompt, seed string) string {
+	cfg := loadConfigOrExit()
+	cat := loadCatalogOrExit(cfg)
+	items := make([]pickerItem, 0, len(cat))
+	for _, e := range cat {
+		meta := strings.Join(e.Capabilities, ",")
+		if e.SizeBytes > 0 {
+			meta = fmt.Sprintf("%.1f GB · %s", float64(e.SizeBytes)/1e9, meta)
+		}
+		if e.License != "" {
+			meta += " · " + e.License
+		}
+		items = append(items, pickerItem{ID: e.ID, Label: e.DisplayName, Meta: meta})
+	}
+	return pickFromList(prompt, items, seed)
+}
+
+// pickInstalledID launches the picker scoped to installed models only.
+func pickInstalledID(prompt, seed string) string {
+	cfg := loadConfigOrExit()
+	st, err := store.OpenSQLite(cfg.Storage.DSN)
+	if err != nil {
+		return ""
+	}
+	defer st.Close()
+	rows, err := st.Models().List(context.Background())
+	if err != nil || len(rows) == 0 {
+		return ""
+	}
+	items := make([]pickerItem, 0, len(rows))
+	for _, m := range rows {
+		meta := m.Status
+		if m.SizeBytes > 0 {
+			meta = fmt.Sprintf("%.1f GB · %s", float64(m.SizeBytes)/1e9, meta)
+		}
+		items = append(items, pickerItem{ID: m.CatalogID, Label: m.CatalogID, Meta: meta})
+	}
+	return pickFromList(prompt, items, seed)
 }
 
 // parseModelAddArgs extracts the model id and the --force flag from the args

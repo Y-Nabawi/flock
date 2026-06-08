@@ -55,13 +55,19 @@ func cmdConnect(args []string) {
 	}
 
 	rest := fs.Args()
-	if len(rest) == 0 {
-		dieHelp(help)
-	}
 	if len(rest) > 1 {
 		die("connect takes exactly one client name (got: %s)", strings.Join(rest, " "))
 	}
-	clientID := rest[0]
+	clientID := ""
+	if len(rest) == 1 {
+		clientID = rest[0]
+	}
+	if clientID == "" || !connectHasClient(clientID) {
+		clientID = pickConnectClient("Pick a client to print a snippet for:", clientID)
+		if clientID == "" {
+			dieHelp(help)
+		}
+	}
 
 	cfg := loadConfigOrExit()
 	resolvedURL := resolveBaseURL(cfg, *baseURL)
@@ -80,6 +86,28 @@ func cmdConnect(args []string) {
 		die("%v", err)
 	}
 	fmt.Print(out.Snippet)
+}
+
+func connectHasClient(id string) bool {
+	for _, c := range control.Clients() {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func pickConnectClient(prompt, seed string) string {
+	cs := control.Clients()
+	items := make([]pickerItem, 0, len(cs))
+	for _, c := range cs {
+		items = append(items, pickerItem{
+			ID:    c.ID,
+			Label: c.ID,
+			Meta:  c.Protocol + " · " + c.Description,
+		})
+	}
+	return pickFromList(prompt, items, seed)
 }
 
 func printClientList(w *os.File) {
