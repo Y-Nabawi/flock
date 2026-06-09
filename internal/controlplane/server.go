@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -238,6 +239,7 @@ func (s *Server) routes() http.Handler {
 			r.Get("/catalog", s.listCatalog)
 			r.Post("/models", s.addModel)
 			r.Delete("/models/{id}", s.deleteModel)
+			r.Post("/models/{id}/unload", s.unloadModel)
 
 			// Tokens
 			r.Get("/tokens", s.listTokens)
@@ -619,6 +621,41 @@ func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "local"})
+}
+
+// unloadModel asks the engine to drop the model from RAM without
+// deleting weights from disk. Mirrors `flock model unload`.
+func (s *Server) unloadModel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	m, _ := s.store.Models().Get(r.Context(), id)
+	engineName := id
+	if m != nil {
+		if idx := indexByte(m.Source, ':'); idx >= 0 && idx < len(m.Source)-1 {
+			engineName = m.Source[idx+1:]
+		}
+	}
+	// Bounded context: a wedged-but-listening engine should fail fast
+	// rather than tying up the admin connection.
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.engine.Health(ctx); err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable,
+			"engine not reachable: "+err.Error())
+		return
+	}
+	if err := s.engine.Unload(ctx, engineName); err != nil {
+		if errors.Is(err, engines.ErrUnloadNotSupported) {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"status": "noop",
+				"id":     id,
+				"reason": s.engine.Name() + " does not support online unload",
+			})
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
 }
 
 func indexByte(s string, c byte) int {

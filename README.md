@@ -1169,6 +1169,7 @@ print(resp.content[0].text)
 | `GET` | `/admin/v1/catalog` | List catalog entries |
 | `POST` | `/admin/v1/models` | Install a model (auto-delegates to shard orch if `sharding.required`) |
 | `DELETE` | `/admin/v1/models/{id}` | Uninstall (auto-handles sharded teardown) |
+| `POST` | `/admin/v1/models/{id}/unload` | Drop a model from engine RAM without deleting weights (engines that don't support it return `status:"noop"`) |
 | `GET` | `/admin/v1/tokens` | List API keys (no hash, no plaintext) |
 | `POST` | `/admin/v1/tokens` | Create a key — returns plaintext ONCE |
 | `DELETE` | `/admin/v1/tokens/{id}` | Revoke a key |
@@ -1272,7 +1273,7 @@ Persistent top-bar chips (every view) show: role (leader/worker), engine reachab
 |---|---|
 | **Dashboard (home)** | 4 KPI cards (nodes, models, requests, tokens served); latency card with p50/p95/p99; tier-colored error-rate card; top-model card; full-width SVG sparkline of requests-per-minute over the last 60 minutes; recent-activity strip (last 6 requests with outcome badges); copy-paste curl example |
 | **Nodes** | List + status; **Add a worker** modal generates a one-time node-scope token and shows both an install-and-join curl one-liner and a `flock join` command for boxes that already have the binary; per-row **drain** and **remove** with confirmation |
-| **Models** | Installed models table; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button); per-row **remove** button with confirmation (auto-handles sharded teardown) |
+| **Models** | Installed models table; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button); per-row **unload** button (drop from engine RAM, keep weights on disk) and **remove** button with confirmation (auto-handles sharded teardown) |
 | **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
 | **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
 | **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome (live polling) |

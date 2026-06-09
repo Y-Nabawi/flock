@@ -1040,7 +1040,10 @@ async function renderModels() {
         `<span class="code">${m.Source}</span>`,
         m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
         new Date(m.InstalledAt).toLocaleString(),
-        `<button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>`,
+        `<div class="flex gap-3">
+           <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${m.CatalogID}')" title="Drop the model from engine RAM without deleting weights">unload</button>
+           <button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>
+         </div>`,
       ];
     });
     root.innerHTML = `
@@ -1149,6 +1152,23 @@ async function removeModel(id) {
     await renderModels();
   } catch (e) {
     toast(`Remove failed: ${e.message}`, "err");
+  }
+}
+
+// unloadModel asks the engine to drop the model from RAM without
+// deleting weights. Mirrors `flock model unload <id>`. For engines that
+// don't support online unload (vLLM, MLX-LM, llama-server), the server
+// returns status=noop with a reason string.
+async function unloadModel(id) {
+  try {
+    const r = await api(`/admin/v1/models/${encodeURIComponent(id)}/unload`, { method: "POST" });
+    if (r && r.status === "noop") {
+      toast(r.reason || `${id}: engine does not support unload`, "info");
+      return;
+    }
+    toast(`Unloaded ${id} from engine (weights still on disk)`, "ok");
+  } catch (e) {
+    toast(`Unload failed: ${e.message}`, "err");
   }
 }
 
