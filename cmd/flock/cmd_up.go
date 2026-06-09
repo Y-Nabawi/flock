@@ -306,6 +306,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Println("    →  Wire up Cursor:       flock connect cursor")
 		fmt.Println("    →  See all clients:      flock connect --list")
 		fmt.Println("    →  Invite a teammate:    flock invite <name>")
+		fmt.Println("    →  Mint another admin key:  flock token create dashboard --admin")
 		fmt.Println()
 		fmt.Println("  Quick test from the shell:")
 		fmt.Printf("    curl %s/v1/chat/completions \\\n", base)
@@ -324,6 +325,7 @@ func printReady(cfg *config.Config, adminKey string) {
 		if saved != "" {
 			fmt.Printf("  Admin API key (from %s):\n", localAdminKeyPath(cfg))
 			fmt.Printf("    %s\n", saved)
+			fmt.Println("    →  Mint another admin key:  flock token create dashboard --admin")
 			fmt.Println()
 		} else {
 			fmt.Printf("  Admin API key:  not saved on this host (%s missing).\n", localAdminKeyPath(cfg))
