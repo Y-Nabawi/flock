@@ -18,13 +18,19 @@ import (
 // On non-TTY destinations (CI, piped output) it falls back to occasional
 // human-readable updates so logs stay grep-able without exploding in size.
 type progressBar struct {
-	label     string
-	start     time.Time
-	lastDraw  time.Time
-	lastBytes int64
-	isTTY     bool
-	width     int
-	finished  bool
+	label    string
+	start    time.Time
+	lastDraw time.Time
+	isTTY    bool
+	width    int
+	finished bool
+
+	// Rate is sampled over a ~1s moving window so the displayed MB/s
+	// and ETA don't twitch with every chunk arrival. The bar fill
+	// itself still redraws at ~20fps from `completed`.
+	rate      int64
+	rateAt    time.Time
+	rateBytes int64
 }
 
 func newProgressBar(label string) *progressBar {
@@ -73,17 +79,35 @@ func (p *progressBar) update(status string, completed, total int64) {
 		return
 	}
 
-	// Compute rate (instantaneous between updates, not since-start, so
-	// the number reflects current bandwidth rather than averaging out).
-	rate := int64(0)
-	if dt := now.Sub(p.lastDraw); dt > 0 && p.lastBytes > 0 {
-		rate = int64(float64(completed-p.lastBytes) / dt.Seconds())
+	// Refresh the rate sample once per second so the displayed MB/s and
+	// ETA stay readable. Between samples we reuse the previous value,
+	// which lets the bar redraw smoothly without making the numbers
+	// flicker on every chunk.
+	if p.rateAt.IsZero() {
+		p.rateAt = p.start
 	}
-	if rate <= 0 && completed > 0 {
-		if dt := now.Sub(p.start); dt > 0 {
-			rate = int64(float64(completed) / dt.Seconds())
+	if dt := now.Sub(p.rateAt); dt >= time.Second {
+		switch {
+		case p.rateBytes > 0:
+			p.rate = int64(float64(completed-p.rateBytes) / dt.Seconds())
+		case completed > 0:
+			// Bootstrap on the very first window: average since start so
+			// the user sees a number on the first tick instead of nothing.
+			if since := now.Sub(p.start); since > 0 {
+				p.rate = int64(float64(completed) / since.Seconds())
+			}
+		}
+		p.rateAt = now
+		p.rateBytes = completed
+	}
+	// On the final update, recompute over whatever time has elapsed so
+	// completion shows an accurate average rather than the last sample.
+	if completed == total && total > 0 && p.rateBytes > 0 {
+		if dt := now.Sub(p.rateAt); dt > 0 && completed-p.rateBytes > 0 {
+			p.rate = int64(float64(completed-p.rateBytes) / dt.Seconds())
 		}
 	}
+	rate := p.rate
 
 	// Right side: "12.3/17.0 GB · 85 MB/s · ETA 0:52"
 	var right string
@@ -129,7 +153,6 @@ func (p *progressBar) update(status string, completed, total int64) {
 	}
 	fmt.Fprintf(os.Stderr, "\r\x1b[K%s", line)
 	p.lastDraw = now
-	p.lastBytes = completed
 }
 
 // done finalizes the bar — newline so subsequent output starts cleanly.
