@@ -177,63 +177,7 @@ claude
 
 ## What's shipped
 
-### Core (single-node, works today)
-
-- ✅ Single binary (`go build ./cmd/flock` → 23 MB) — no Python or Docker required
-- ✅ **OpenAI-compatible** API (`/v1/chat/completions`, `/v1/models`) — Cursor, Aider, Continue, Zed, OpenAI SDK
-- ✅ **Anthropic-compatible** API (`/v1/messages`, `/v1/messages/count_tokens`) — Claude Code, Anthropic SDK
-- ✅ Streaming (SSE) for both protocols, with proper client-disconnect handling (no goroutine leaks)
-- ✅ **Hybrid fallback** — requests for `claude-*` or `gpt-*` transparently proxy to the real Anthropic / OpenAI API (set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`); protocol mismatch (e.g., Claude model on OpenAI route) returns a clear 400
-- ✅ Engine drivers: **Ollama**, **vLLM**, **MLX-LM**, **llama.cpp** (single-node *and* RPC mode; llama-server is **auto-spawned** when the catalog entry has `source.repo` set — no manual `llama-server` step)
-- ✅ Engine endpoints + API keys configurable per engine via env (`FLOCK_VLLM_ENDPOINT`, `VLLM_API_KEY`, …)
-- ✅ Hardware auto-detection (mac + linux + NVIDIA) and auto-pick a default model
-- ✅ Catalog with 37 curated model entries spanning Llama, Qwen, Gemma, MiMo, DeepSeek, GPT-OSS, Mistral, Phi, Kimi, GLM, Nemotron, StepFun, Moondream, Pixtral families — with `released:` dates and license metadata enforced by CI
-- ✅ Interactive picker (`flock model add|info|remove`, `flock connect` with no ID launches a fuzzy-filter picker — ↑↓/enter)
-- ✅ Shell completion (`flock completion bash|zsh|fish`)
-- ✅ Colored CLI output (auto-detects TTY; respects `NO_COLOR` / `FLOCK_NO_COLOR`)
-- ✅ `--json` on every read command (`model search/ls/info`, `status`, `usage`, `audit`) for scripting
-- ✅ `flock usage --summary` / `flock audit --summary` aggregate views (top models, p50/p95/p99, error rate, sparkline) — same data as the dashboard home view
-- ✅ First-run wizard on `flock up` (picker-driven starter-model install; skip with `--no-wizard`)
-- ✅ Real progress bar on `flock model add` with bytes/sec + ETA
-- ✅ `--dry-run` on `flock model add` (preview download size, engine, RAM check, ETA without pulling weights)
-- ✅ Confirmation prompt on `flock model remove` / `flock node remove` / `flock shard remove` (skip with `--yes`)
-- ✅ Did-you-mean for top-level subcommand typos (Damerau-Levenshtein over the command list)
-
-### Multi-node (cross-node routing — landed, untested with 2 real boxes)
-
-- ✅ `flock token create --node` issues a worker join token
-- ✅ `flock join <leader>?token=…` registers + starts a worker HTTP server bound to the LAN/tailnet address
-- ✅ Workers run their own engine (Ollama / vLLM / MLX); leader proxies inference requests to them
-- ✅ **Router** picks the right node per request: local-preferred if the model is loaded locally, otherwise least-loaded worker that has the model
-- ✅ **Heartbeat carries loaded models** every 5s; leader reconciles the placements table automatically
-- ✅ Agent handles auth errors gracefully (401 → exit, 404 → re-register, transient → exponential backoff)
-- ✅ **Sharding auto-orchestration** — `flock shard create <model> <N>` picks N workers, launches `rpc-server` on each via the worker process-supervisor API, launches the coordinator `llama-server --rpc <list>` locally, registers the placement, and the Router routes requests to the coordinator transparently. Web UI exposes the same in the Shards tab.
-- ✅ Process supervisor (`internal/agent/supervisor.go`) — Start/Stop/Logs with TCP-port readiness probe, used by the leader for the coordinator and by workers for rpc-server.
-- ⚠️ Tailscale `tsnet` mesh backend — interface defined; LAN backend ships, tsnet implementation pending
-
-### Multi-tenant + observability
-
-- ✅ Per-user API keys with scopes (admin / user / node), daily token quotas, audit log
-- ✅ Usage metering — every request recorded with model/protocol/tokens/latency; metrics fire even in dev mode (no key required)
-- ✅ Prometheus metrics at `/metrics`
-- ✅ Embedded web UI (single HTML, Tailwind via CDN) — dashboard home with sparkline + p50/p95/p99 + error rate + top model + recent activity strip; live polling (5s) on Nodes/Models/Usage/Audit; persistent top-bar chips for role + engine reachability + node/model counts; filterable catalog browser on the Models tab; "Add a worker" modal with one-time join token + copy-pasteable install-and-join snippets
-- ⚠️ OIDC for the UI — UI uses pasted admin key for now
-
-### Release + ops
-
-- ✅ GitHub Actions CI workflow
-- ✅ GoReleaser config + release workflow (auto-builds darwin/linux × arm64/amd64, creates Homebrew formula)
-- ✅ Homebrew formula template
-- ✅ install.sh (`curl … | sh`) script — pulls latest from GH Releases when you tag one
-
-### Verified to work
-
-- ✅ `go build ./cmd/flock` — clean on go 1.25 / darwin-arm64
-- ✅ `go vet ./...` — clean
-- ✅ `flock up` boots, bootstraps admin key, starts gateway
-- ✅ `flock up` → `curl /v1/models` returns the auto-picked model
-- ✅ `curl /v1/chat/completions` reaches Ollama and translates errors back as proper OpenAI shape
-- ⚠️ Actual model inference response — Homebrew's `ollama` formula on arm64 is broken (missing internal `llama-server` binary); use `brew install --cask ollama` or `curl -fsSL https://ollama.com/install.sh | sh` for a working Ollama install
+See [CHANGELOG.md](CHANGELOG.md) for the full feature inventory, grouped by area (core, CLI ergonomics, multi-node + sharding, routing intelligence, multi-tenancy, observability, web UI, connect snippets, release + ops). For the per-release diff see [Releases](https://github.com/hadihonarvar/flock/releases) — every `feat:` / `fix:` commit on `main` cuts a new tag automatically.
 
 **For new users**: see [QUICKSTART.md](QUICKSTART.md) — 3-minute install + first chat completion.
 **For full usage docs**: keep reading this file.
