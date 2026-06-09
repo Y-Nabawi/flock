@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -87,11 +88,11 @@ func TestRouter_Chat_FallbackSuccessOnSecondModel(t *testing.T) {
 		"primary": {"backup"},
 	})
 
-	// Capture fallback log line.
+	// Capture fallback log line via slog. The Router emits structured
+	// events through r.log; wire a JSON handler over a buffer so we can
+	// assert on the rendered output.
 	var buf bytes.Buffer
-	prev := stderrTarget
-	stderrTarget = &buf
-	defer func() { stderrTarget = prev }()
+	r.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
 
 	// We can't drive r.pick() against a real store, so call the inner
 	// flow directly with primary's modelOnNode shortcut. The actual pick
@@ -109,8 +110,9 @@ func TestRouter_Chat_FallbackSuccessOnSecondModel(t *testing.T) {
 	if stub.served != "backup" {
 		t.Fatalf("served = %q, want backup", stub.served)
 	}
-	if !strings.Contains(buf.String(), "primary → backup") {
-		t.Fatalf("expected fallback log line, got: %q", buf.String())
+	out := buf.String()
+	if !strings.Contains(out, `"primary":"primary"`) || !strings.Contains(out, `"used":"backup"`) {
+		t.Fatalf("expected slog fallback event with primary=primary used=backup, got: %q", out)
 	}
 }
 
@@ -143,6 +145,37 @@ func TestRouter_Chat_NoFallbackBehavesAsBefore(t *testing.T) {
 	}
 	if got := drain(stream); !strings.Contains(got, "hello from primary") {
 		t.Fatalf("expected primary to serve, got: %q", got)
+	}
+}
+
+func TestRouter_MaxFallbackAttemptsCapsChain(t *testing.T) {
+	stub := &stubEngine{name: "stub"}
+	r := newRouterWithStub(t, stub, map[string][]string{
+		"primary": {"f1", "f2", "f3", "f4", "f5"},
+	})
+	// Cap = 2 means we walk primary + 2 fallbacks = 3 candidates total.
+	r.SetMaxFallbackAttempts(2)
+	got := r.resolveChain("primary")
+	if len(got) != 3 {
+		t.Fatalf("cap=2 should yield 3 candidates (primary + 2), got %d: %v", len(got), got)
+	}
+	want := []string{"primary", "f1", "f2"}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("position %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+func TestRouter_NoCapWalksWholeChain(t *testing.T) {
+	stub := &stubEngine{name: "stub"}
+	r := newRouterWithStub(t, stub, map[string][]string{
+		"primary": {"f1", "f2", "f3"},
+	})
+	// Default: no cap → full chain.
+	got := r.resolveChain("primary")
+	if len(got) != 4 {
+		t.Fatalf("no cap should yield 4 candidates, got %d: %v", len(got), got)
 	}
 }
 
@@ -186,7 +219,7 @@ func (r *Router) chatWithStubLocalOnly(ctx context.Context, req engines.ChatRequ
 			continue
 		}
 		if i > 0 {
-			logFallback(req.Model, candidate, "chat", primaryErr)
+			r.logFallback(req.Model, candidate, "chat", primaryErr)
 		}
 		return stream, nil
 	}
@@ -206,7 +239,7 @@ func (r *Router) embedWithStubLocalOnly(ctx context.Context, req engines.EmbedRe
 		res, err := ee.Embed(ctx, attempt)
 		if err == nil {
 			if i > 0 {
-				logFallback(req.Model, candidate, "embed", primaryErr)
+				r.logFallback(req.Model, candidate, "embed", primaryErr)
 			}
 			return res, nil
 		}

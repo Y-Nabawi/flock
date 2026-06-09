@@ -19,13 +19,13 @@ package router
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/metrics"
 	"github.com/hadihonarvar/flock/internal/store"
 
 	"go.opentelemetry.io/otel"
@@ -40,10 +40,6 @@ import (
 // or no-op'd.
 var tracer trace.Tracer = otel.Tracer("github.com/hadihonarvar/flock/internal/router")
 
-// stderrTarget is a package-level writer so tests can capture fallback log
-// lines without touching the real os.Stderr.
-var stderrTarget io.Writer = os.Stderr
-
 // FallbackResolver returns the ordered list of fallback model IDs for a
 // primary model. Empty slice (or nil) means no fallback — Router behaves
 // exactly as it did before this hook existed. Typically backed by the
@@ -56,6 +52,20 @@ type Router struct {
 	local     engines.Engine
 	store     store.Store
 	localNode string // node id used for "local" placements (typically "local")
+
+	// log emits structured fallback / pick events. Defaults to slog.Default()
+	// when SetLogger isn't called; tests can swap in a discard logger.
+	log *slog.Logger
+
+	// maxFallbackAttempts caps the number of candidates the router will walk
+	// before giving up. 0 means "no cap" (legacy behavior — walk the entire
+	// chain). Set via SetMaxFallbackAttempts.
+	maxFallbackAttempts int
+
+	// heartbeatMaxAge declares how stale a worker's last heartbeat can be
+	// before pick() refuses to route to it. 0 means "no check" (legacy).
+	// Set via SetHeartbeatMaxAge.
+	heartbeatMaxAge time.Duration
 
 	// FallbackResolver is optional. When set, Chat / Embed will retry the
 	// request against each fallback model in order on retriable errors
@@ -82,9 +92,35 @@ func New(local engines.Engine, st store.Store) *Router {
 		local:     local,
 		store:     st,
 		localNode: "local",
+		log:       slog.Default(),
 		inflight:  make(map[string]int),
 		remotes:   make(map[string]engines.Engine),
 		latency:   newLatencyStats(LatencyConfig{}),
+	}
+}
+
+// SetLogger swaps in a structured logger for fallback + pick events.
+// Defaults to slog.Default() if never called.
+func (r *Router) SetLogger(l *slog.Logger) {
+	if l != nil {
+		r.log = l
+	}
+}
+
+// SetMaxFallbackAttempts caps how many candidates Chat/Embed will try
+// before giving up. 0 (default) walks the entire chain.
+func (r *Router) SetMaxFallbackAttempts(n int) {
+	if n >= 0 {
+		r.maxFallbackAttempts = n
+	}
+}
+
+// SetHeartbeatMaxAge causes pick() to refuse to dispatch to a worker
+// whose last heartbeat is older than `d`. 0 (default) disables the check.
+// Useful for catching dead workers before the engine call timeout fires.
+func (r *Router) SetHeartbeatMaxAge(d time.Duration) {
+	if d >= 0 {
+		r.heartbeatMaxAge = d
 	}
 }
 
@@ -104,7 +140,8 @@ func (r *Router) SetLatencyConfig(cfg LatencyConfig) {
 }
 
 // resolveChain returns [primary, ...fallback]. When no resolver is set or
-// the model has no fallback entry, returns just [primary].
+// the model has no fallback entry, returns just [primary]. Bounded by
+// SetMaxFallbackAttempts when configured.
 func (r *Router) resolveChain(model string) []string {
 	if r.fallback == nil {
 		return []string{model}
@@ -116,6 +153,12 @@ func (r *Router) resolveChain(model string) []string {
 	chain := make([]string, 0, len(fb)+1)
 	chain = append(chain, model)
 	chain = append(chain, fb...)
+	// Cap = primary + N fallbacks (so MaxFallbackAttempts=3 means walk
+	// up to 4 candidates total). The legacy behavior (cap=0) is "no cap".
+	if cap := r.maxFallbackAttempts; cap > 0 && len(chain) > cap+1 {
+		chain = chain[:cap+1]
+		metrics.ObserveRouterFallback("chain", "cap-exhausted")
+	}
 	return chain
 }
 
@@ -219,7 +262,7 @@ func (r *Router) Embed(ctx context.Context, req engines.EmbedRequest) (engines.E
 			attemptSpan.SetStatus(codes.Ok, "")
 			attemptSpan.End()
 			if i > 0 {
-				logFallback(req.Model, candidate, "embed", primaryErr)
+				r.logFallback(req.Model, candidate, "embed", primaryErr)
 				span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 			}
 			span.SetAttributes(attribute.String("flock.model.served", candidate))
@@ -326,7 +369,7 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 		attemptSpan.End()
 
 		if i > 0 {
-			logFallback(req.Model, candidate, "chat", primaryErr)
+			r.logFallback(req.Model, candidate, "chat", primaryErr)
 			span.SetAttributes(attribute.Int("flock.fallback.used_at", i))
 		}
 		span.SetAttributes(attribute.String("flock.model.served", candidate))
@@ -389,21 +432,26 @@ func drainWithTimeout[T any](ch <-chan T, d time.Duration) {
 	}
 }
 
-// logFallback emits a stderr line so operators see the fallback in flock up
-// logs without rolling their own log aggregation. Kept terse so it doesn't
-// clutter steady-state output — fallback should be the exception.
-func logFallback(primary, used, op string, primaryErr error) {
-	// We deliberately use stderr rather than the typed slog logger here:
-	// the Router doesn't take a logger dep, and adding one for this single
-	// line isn't worth the constructor churn. Operators tail flock up
-	// stderr; that's where this surface belongs.
-	fmt.Fprintf(stderrTarget, "[router] %s fallback: %s → %s (primary error: %v)\n",
-		op, primary, used, primaryErr)
+// logFallback emits a structured slog event so operators can filter
+// fallback activations by model, fallback target, op, or error class.
+// Also bumps the Prometheus counter so dashboards can chart fallback rate
+// without scraping logs.
+func (r *Router) logFallback(primary, used, op string, primaryErr error) {
+	if r.log != nil {
+		r.log.Warn("router fallback",
+			"op", op,
+			"primary", primary,
+			"used", used,
+			"err", primaryErr,
+		)
+	}
+	metrics.ObserveRouterFallback(op, "primary-error")
 }
 
 // pick returns an engine and the node id it represents.
 func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string, error) {
 	if model == "" {
+		metrics.ObserveRouterPick("local", "ok")
 		return r.local, r.localNode, nil
 	}
 
@@ -411,12 +459,14 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	//    local today) via a llamacpp engine. The coordinator handles the
 	//    fan-out to rpc-server backends on workers internally.
 	if eng, ok := r.shardCoordinator(ctx, model); ok {
+		metrics.ObserveRouterPick("shard", "ok")
 		return eng, "shard:" + model, nil
 	}
 
 	// 1. Is the model on the local node?
 	localHas, _ := r.modelOnNode(ctx, r.localNode, model)
 	if localHas {
+		metrics.ObserveRouterPick("local", "ok")
 		return r.local, r.localNode, nil
 	}
 
@@ -424,6 +474,7 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	placements, err := r.store.Placements().GetByModel(ctx, model)
 	if err != nil {
 		// Fall back to local — surface its error rather than hiding ours
+		metrics.ObserveRouterPick("fallback-to-local", "store-error")
 		return r.local, r.localNode, nil
 	}
 	// Filter out local (if present) — we already checked above
@@ -436,6 +487,7 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 
 	if len(workers) == 0 {
 		// Nothing has it — let local try, it will return a clear error.
+		metrics.ObserveRouterPick("fallback-to-local", "no-workers")
 		return r.local, r.localNode, nil
 	}
 
@@ -452,14 +504,37 @@ func (r *Router) pick(ctx context.Context, model string) (engines.Engine, string
 	})
 	r.mu.RUnlock()
 
-	pick := workers[0]
-	node, err := r.store.Nodes().Get(ctx, pick.NodeID)
-	if err != nil || node == nil || node.Address == "" {
-		return nil, "", fmt.Errorf("router: node %s unreachable", pick.NodeID)
+	// Walk the sorted list: skip any worker whose heartbeat is stale
+	// before falling back to local. Without this, a request to a model
+	// that's still in the placements table for a dead node would wait
+	// for the engine call to time out.
+	for _, pick := range workers {
+		node, err := r.store.Nodes().Get(ctx, pick.NodeID)
+		if err != nil || node == nil || node.Address == "" {
+			metrics.ObserveRouterPick("worker", "error")
+			continue
+		}
+		if r.heartbeatMaxAge > 0 && !node.LastHeartbeat.IsZero() &&
+			time.Since(node.LastHeartbeat) > r.heartbeatMaxAge {
+			metrics.ObserveRouterPick("worker", "stale-heartbeat")
+			if r.log != nil {
+				r.log.Warn("router skipping stale worker",
+					"node", pick.NodeID,
+					"model", model,
+					"last_heartbeat", node.LastHeartbeat,
+					"max_age", r.heartbeatMaxAge,
+				)
+			}
+			continue
+		}
+		eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
+		metrics.ObserveRouterPick("worker", "ok")
+		return eng, node.ID, nil
 	}
-
-	eng := r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken)
-	return eng, node.ID, nil
+	// All workers exhausted (all dead or stale). Fall back to local — it
+	// will surface its own "model not loaded" error.
+	metrics.ObserveRouterPick("fallback-to-local", "all-workers-stale")
+	return r.local, r.localNode, nil
 }
 
 // shardCoordinator returns the llamacpp engine pointing at the coordinator
@@ -535,7 +610,9 @@ func (r *Router) getOrCreateRemote(nodeID, address, token string) engines.Engine
 func (r *Router) incInflight(nodeID string) {
 	r.mu.Lock()
 	r.inflight[nodeID]++
+	n := r.inflight[nodeID]
 	r.mu.Unlock()
+	metrics.SetRouterInflight(nodeID, n)
 }
 
 func (r *Router) decInflight(nodeID string) {
@@ -543,7 +620,9 @@ func (r *Router) decInflight(nodeID string) {
 	if r.inflight[nodeID] > 0 {
 		r.inflight[nodeID]--
 	}
+	n := r.inflight[nodeID]
 	r.mu.Unlock()
+	metrics.SetRouterInflight(nodeID, n)
 }
 
 // Inflight returns a snapshot of current per-node in-flight counts (used by

@@ -724,14 +724,18 @@ Declared in `internal/metrics/metrics.go`. Exposed at `:9090/metrics` (configura
 
 Key series:
 
+- `flock_requests_total{model,protocol,outcome}` — counter
 - `flock_request_duration_seconds{model,protocol,outcome}` — histogram
-- `flock_request_tokens{model,direction}` — counter
-- `flock_request_ttft_seconds{model}` — histogram
-- `flock_node_up{node,hardware}` — gauge
-- `flock_node_gpu_util{node,gpu}` — gauge
-- `flock_node_memory_used_bytes{node}` — gauge
-- `flock_queue_depth{model}` — gauge
+- `flock_request_tokens_total{model,direction}` — counter
 - `flock_model_loaded{model,node}` — gauge
+- `flock_node_up{node,hostname}` — gauge
+
+Router subsystem (added in the observability pass):
+
+- `flock_router_picks_total{path,outcome}` — counter. `path` is one of `local|worker|shard|fallback-to-local`; `outcome` is `ok|error|store-error|no-workers|stale-heartbeat|all-workers-stale`.
+- `flock_router_inflight{node}` — gauge. Mirrors the router's per-node in-flight request count.
+- `flock_router_fallback_total{op,reason}` — counter. `op` is `chat|embed`; `reason` is `primary-error|latency-reorder|cap-exhausted`.
+- `flock_router_attempt_duration_seconds{model,outcome}` — histogram.
 
 ### Traces
 

@@ -41,7 +41,51 @@ var (
 		Name: "flock_node_up",
 		Help: "1 if the node has heartbeated recently, 0 otherwise.",
 	}, []string{"node", "hostname"})
+
+	routerPicksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "flock_router_picks_total",
+		Help: "Router dispatch decisions by path (local|worker|shard|fallback-to-local) and outcome (ok|error|stale-heartbeat).",
+	}, []string{"path", "outcome"})
+
+	routerInflight = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "flock_router_inflight",
+		Help: "Current in-flight request count per node, as seen by the router.",
+	}, []string{"node"})
+
+	routerFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "flock_router_fallback_total",
+		Help: "Fallback chain activations by operation (chat|embed) and reason (primary-error|latency-reorder|cap-exhausted).",
+	}, []string{"op", "reason"})
+
+	routerAttemptDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "flock_router_attempt_duration_seconds",
+		Help:    "Per-attempt duration in seconds (chat = start-to-stream-done, embed = full response).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
+	}, []string{"model", "outcome"})
 )
+
+// ObserveRouterPick records a dispatch decision. Path is one of
+// local | worker | shard | fallback-to-local; outcome is ok | error | stale-heartbeat.
+func ObserveRouterPick(path, outcome string) {
+	routerPicksTotal.WithLabelValues(path, outcome).Inc()
+}
+
+// SetRouterInflight sets the live inflight count for a node. Called from
+// inc/dec hooks so the gauge mirrors the router's view exactly.
+func SetRouterInflight(node string, n int) {
+	routerInflight.WithLabelValues(node).Set(float64(n))
+}
+
+// ObserveRouterFallback records a fallback activation. op is chat | embed;
+// reason is primary-error | latency-reorder | cap-exhausted.
+func ObserveRouterFallback(op, reason string) {
+	routerFallbackTotal.WithLabelValues(op, reason).Inc()
+}
+
+// ObserveRouterAttempt records per-attempt duration and outcome.
+func ObserveRouterAttempt(model, outcome string, dur time.Duration) {
+	routerAttemptDuration.WithLabelValues(model, outcome).Observe(dur.Seconds())
+}
 
 // ObserveRequest records the outcome of a single inference request.
 func ObserveRequest(model, protocol, outcome string, dur time.Duration, promptTokens, completionTokens int) {
