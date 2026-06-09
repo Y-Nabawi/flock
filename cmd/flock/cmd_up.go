@@ -301,12 +301,18 @@ func printReady(cfg *config.Config, adminKey string) {
 		fmt.Printf("    %s\n", adminKey)
 		fmt.Println()
 		fmt.Println("  Next steps:")
-		fmt.Printf("    →  Test in the browser:  %s\n", base)
-		fmt.Println("    →  Wire up Claude Code:  flock connect claude-code")
-		fmt.Println("    →  Wire up Cursor:       flock connect cursor")
-		fmt.Println("    →  See all clients:      flock connect --list")
-		fmt.Println("    →  Invite a teammate:    flock invite <name>")
-		fmt.Println("    →  Mint another admin key:  flock token create dashboard --admin")
+		// Column width tuned to the widest label ("Mint another admin key:"
+		// at 23 chars) so the right-hand commands line up no matter which
+		// label is longest.
+		nx := func(label, val string) {
+			fmt.Printf("    →  %-25s%s\n", label, val)
+		}
+		nx("Test in the browser:", base)
+		nx("Wire up Claude Code:", "flock connect claude-code")
+		nx("Wire up Cursor:", "flock connect cursor")
+		nx("See all clients:", "flock connect --list")
+		nx("Invite a teammate:", "flock invite <name>")
+		nx("Mint another admin key:", "flock token create dashboard --admin")
 		fmt.Println()
 		fmt.Println("  Quick test from the shell:")
 		fmt.Printf("    curl %s/v1/chat/completions \\\n", base)
