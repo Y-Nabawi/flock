@@ -145,6 +145,15 @@ func extractKey(r *http.Request) (string, bool) {
 	if h := r.Header.Get("x-api-key"); h != "" {
 		return h, true
 	}
+	// Query parameter for endpoints that browsers can't open with custom
+	// headers (notably EventSource for SSE). The query lives only in
+	// server memory; it doesn't leak past this process unless an access
+	// log is configured to capture URLs. Operators who care can disable
+	// query-string logging or front-end the dashboard with a proxy that
+	// strips this param.
+	if k := r.URL.Query().Get("key"); k != "" {
+		return k, true
+	}
 	return "", false
 }
 

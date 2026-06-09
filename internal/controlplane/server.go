@@ -22,6 +22,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/events"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/router"
 	"github.com/hadihonarvar/flock/internal/scheduler"
@@ -48,6 +49,11 @@ type Server struct {
 	openaiH    *api.Handler
 	anthropicH *api.AnthropicHandler
 	egressH    *api.EgressHandler
+
+	// bus fans out dashboard refresh events. /admin/v1/events streams
+	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
+	// publish topic strings on state change.
+	bus *events.Bus
 
 	// Version is stamped into traces and the access log. Set by callers
 	// before Start; defaults to "dev" if unset.
@@ -110,6 +116,7 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		openaiH:    openaiH,
 		anthropicH: anthropicH,
 		egressH:    egressH,
+		bus:        events.New(),
 	}
 }
 
@@ -265,6 +272,11 @@ func (s *Server) routes() http.Handler {
 			// data the `flock status` CLI surfaces, returned as one JSON
 			// blob so the UI can poll a single endpoint.
 			r.Get("/status", s.statusSummary)
+
+			// Server-Sent Events stream. Dashboards subscribe once and
+			// re-fetch the relevant view on every event. Replaces the
+			// per-tab 5 s polling with push-on-change.
+			r.Get("/events", s.eventsStream)
 
 			// Onboarding-and-sharing (M3-T23 / M3-T24 / M3-T26)
 			r.Get("/connect/clients", s.listConnectClients)
@@ -443,6 +455,7 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: n.ID})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "registered", "id": n.ID})
 }
 
@@ -508,6 +521,7 @@ func (s *Server) drainNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: id})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "draining", "id": id})
 }
 
@@ -524,6 +538,7 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.Placements().Delete(r.Context(), p.NodeID, p.ModelID)
 		}
 	}
+	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: id})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id})
 }
 
@@ -558,6 +573,8 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.router.InvalidateModel(req.ID)
+		s.bus.Publish(events.Event{Topic: events.TopicModels, ID: req.ID})
+		s.bus.Publish(events.Event{Topic: events.TopicShards, ID: req.ID})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "sharded"})
 		return
 	}
@@ -586,6 +603,7 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.Placements().Upsert(r.Context(), store.Placement{
 		NodeID: "local", ModelID: engineName, Status: "ready", LastSeen: time.Now(),
 	})
+	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: req.ID})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "id": req.ID, "kind": "local"})
 }
 
@@ -603,6 +621,8 @@ func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.router.InvalidateModel(id)
+		s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
+		s.bus.Publish(events.Event{Topic: events.TopicShards, ID: id})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "sharded"})
 		return
 	}
@@ -620,7 +640,56 @@ func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id, "kind": "local"})
+}
+
+// eventsStream serves Server-Sent Events to dashboard subscribers. Each
+// connection gets its own buffered channel from the bus; producers
+// elsewhere in the server (model add/remove, node heartbeat, usage
+// record) publish topic strings that we encode as one-line SSE messages.
+// The handler also sends a 25 s heartbeat ping so reverse proxies don't
+// idle the connection out.
+func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch, cancel := s.bus.Subscribe(32)
+	defer cancel()
+
+	// Greet so the EventSource client knows the stream is alive even
+	// before the first state change.
+	_, _ = fmt.Fprintf(w, "event: hello\ndata: {\"ok\":true}\n\n")
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(25 * time.Second)
+	defer heartbeat.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			// SSE comment line — clients ignore it, but proxies see traffic.
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			payload, _ := json.Marshal(ev)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Topic, payload)
+			flusher.Flush()
+		}
+	}
 }
 
 // unloadModel asks the engine to drop the model from RAM without
@@ -655,6 +724,7 @@ func (s *Server) unloadModel(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.bus.Publish(events.Event{Topic: events.TopicModels, ID: id})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unloaded", "id": id})
 }
 

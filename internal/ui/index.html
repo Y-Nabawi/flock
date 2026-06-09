@@ -129,6 +129,7 @@ function showApp() {
   renderKeyStatus();
   renderTopChips();
   setInterval(renderTopChips, 5000);
+  connectEventStream();
   switchView(currentView);
 }
 
@@ -155,10 +156,22 @@ async function renderTopChips() {
   }
 }
 
-// Lightweight per-view polling. Each tab can opt-in by registering its
-// refresher; switchView clears the previous handle so we never overlap.
+// Live updates use two paths:
+//
+//   1. /admin/v1/events SSE stream — pushes a topic name (models /
+//      nodes / shards / usage / audit) when the server's state for
+//      that topic changes. The active view refreshes immediately on
+//      the matching topic.
+//   2. A slow per-view polling fallback (15 s, pauses when the tab is
+//      hidden) so we eventually catch state changes the bus couldn't
+//      publish — e.g. the leader was restarted and the SSE stream
+//      hadn't reconnected yet.
 let viewPoll = null;
-function startPolling(intervalMs, refresher) {
+let viewRefresher = null;
+let viewTopics = [];
+function startPolling(intervalMs, refresher, topics) {
+  viewRefresher = refresher;
+  viewTopics = topics || [];
   if (viewPoll) clearInterval(viewPoll);
   viewPoll = setInterval(() => {
     // Only poll while the document is visible; otherwise we'd hammer
@@ -169,6 +182,45 @@ function startPolling(intervalMs, refresher) {
 function stopPolling() {
   if (viewPoll) clearInterval(viewPoll);
   viewPoll = null;
+  viewRefresher = null;
+  viewTopics = [];
+}
+
+// connectEventStream opens the SSE stream and dispatches incoming
+// events to whatever refresher the active view registered. Reconnects
+// with exponential backoff if the stream drops.
+let eventSrc = null;
+let eventReconnectAt = 1000;
+function connectEventStream() {
+  try {
+    if (eventSrc) { eventSrc.close(); eventSrc = null; }
+    // EventSource doesn't let us set Authorization headers, so we pass
+    // the key as a query parameter. The route still requires admin
+    // scope, just sourced from the query string.
+    eventSrc = new EventSource(`/admin/v1/events?key=${encodeURIComponent(API_KEY)}`);
+    eventSrc.onopen = () => { eventReconnectAt = 1000; };
+    eventSrc.onmessage = (e) => onEvent("message", e);
+    ["models", "nodes", "shards", "usage", "audit", "hello"].forEach((t) => {
+      eventSrc.addEventListener(t, (e) => onEvent(t, e));
+    });
+    eventSrc.onerror = () => {
+      eventSrc.close();
+      eventSrc = null;
+      // Exponential backoff up to ~30 s.
+      setTimeout(connectEventStream, eventReconnectAt);
+      eventReconnectAt = Math.min(eventReconnectAt * 2, 30000);
+    };
+  } catch (e) {
+    // EventSource not supported (e.g. very old browsers). Polling
+    // still works on its own.
+  }
+}
+
+function onEvent(topic, _ev) {
+  if (topic === "hello") return; // greet only
+  if (!viewRefresher || !viewTopics.includes(topic)) return;
+  if (document.visibilityState !== "visible") return;
+  viewRefresher();
 }
 
 // Toast pattern (replaces alert/inline-error sprawl). Stack at
@@ -334,7 +386,7 @@ const card = (title, value, sub = "") =>
    </div>`;
 
 async function renderDashboard() {
-  startPolling(5000, renderDashboard);
+  startPolling(15000, renderDashboard, ["usage", "models", "nodes"]);
   const root = $("#view-dashboard");
   if (!root.dataset.loaded) {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
@@ -844,7 +896,7 @@ function pgClear() {
 }
 
 async function renderNodes() {
-  startPolling(5000, renderNodes);
+  startPolling(15000, renderNodes, ["nodes"]);
   const root = $("#view-nodes");
   if (!root.dataset.loaded) {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
@@ -1118,7 +1170,7 @@ function copyVal(id, btn) {
 }
 
 async function renderModels() {
-  startPolling(5000, renderModels);
+  startPolling(15000, renderModels, ["models"]);
   const root = $("#view-models");
   if (!root.dataset.loaded) {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
@@ -1539,7 +1591,7 @@ function scopeBadge(scope) {
 }
 
 async function renderUsage() {
-  startPolling(5000, renderUsage);
+  startPolling(15000, renderUsage, ["usage"]);
   const root = $("#view-usage");
   if (!root.dataset.loaded) {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;
@@ -1566,7 +1618,7 @@ async function renderUsage() {
 }
 
 async function renderAudit() {
-  startPolling(5000, renderAudit);
+  startPolling(15000, renderAudit, ["audit"]);
   const root = $("#view-audit");
   if (!root.dataset.loaded) {
     root.innerHTML = `<div class="text-sm text-slate-500">Loading…</div>`;

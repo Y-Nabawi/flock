@@ -1182,6 +1182,7 @@ print(resp.content[0].text)
 | `GET` | `/admin/v1/audit/summary` | Top actors + top actions |
 | `GET` | `/admin/v1/config` | Effective config, secrets redacted |
 | `GET` | `/admin/v1/status` | Compact role + engine reachability + node/model counts (powers dashboard top-bar chips) |
+| `GET` | `/admin/v1/events` | Server-Sent Events stream. Push-on-change for `models` / `nodes` / `shards` topics. Sends a 25 s `keepalive` comment so proxies don't idle. Auth via Bearer or `?key=` query param. |
 
 All admin endpoints require an admin key (`flock token create --admin`).
 
@@ -1267,7 +1268,7 @@ The UI is shipped embedded in the Go binary via `//go:embed`. It is *not* a sepa
 
 All admin actions are also doable via CLI — see the [CLI reference](#cli-reference).
 
-Persistent top-bar chips (every view) show: role (leader/worker), engine reachability, node count, model count — polled every 5 s. Most tabs auto-refresh every 5 s while visible (pauses when the browser tab is hidden).
+Persistent top-bar chips (every view) show: role (leader/worker), engine reachability, node count, model count — polled every 5 s. Most tabs subscribe to the `/admin/v1/events` SSE stream and re-fetch instantly when the relevant topic fires; a 15 s polling fallback runs underneath in case the stream drops (also pauses when the browser tab is hidden).
 
 | Tab | Capabilities |
 |---|---|
