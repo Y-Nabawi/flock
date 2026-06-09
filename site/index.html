@@ -575,7 +575,7 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
         <p class="mt-6 text-center text-slate-400 text-sm max-w-2xl mx-auto leading-relaxed">
           Plus any model on HuggingFace via <code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">flock model add hf:owner/repo</code>
           or any Ollama tag via <code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">flock model add ollama:&lt;tag&gt;</code>.
-          Vision (image input on chat) and embeddings are live as of v0.4 via the Ollama path. Speech endpoints are on the roadmap (see
+          Vision (<code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">image_url</code> content blocks on <code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">/v1/chat/completions</code>) and embeddings (<code class="font-mono text-xs bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded">/v1/embeddings</code>) ship via the Ollama engine path. Speech endpoints are on the roadmap (see
           <a href="https://github.com/hadihonarvar/flock/blob/main/ROADMAP.md" class="text-emerald-400 hover:text-emerald-300 underline">ROADMAP.md</a>).
         </p>
       </div>
@@ -963,10 +963,10 @@ $ curl http://localhost:8080/v1/chat/completions \
               <div class="font-semibold mb-1">🔒 Security model — LAN trust</div>
               <ul class="list-disc list-inside space-y-1">
                 <li><strong>User API keys</strong> hashed (sha256); plaintext shown once at creation.</li>
-                <li><strong>Worker tokens</strong> are stored plaintext in <code class="font-mono text-xs">nodes.worker_token</code> — assumes a trusted network.</li>
+                <li><strong>Worker tokens</strong> are stored plaintext in <code class="font-mono text-xs">nodes.worker_token</code>; control-plane traffic uses HMAC-SHA256 signatures so the token isn't sent on the wire after the initial join. Set <code class="font-mono text-xs">FLOCK_REJECT_BEARER=1</code> on workers to refuse the bearer-fallback path entirely.</li>
                 <li><strong>Worker HTTP servers</strong> bind to the mesh address (LAN / tailnet IP), never 0.0.0.0.</li>
               </ul>
-              <div class="mt-2">For hostile networks, run the cluster behind Tailscale until v0.5 lands HMAC mutual auth.</div>
+              <div class="mt-2">For hostile networks, still run the cluster behind Tailscale or a similar zero-trust overlay — HMAC stops in-flight token theft but doesn't replace network-layer encryption.</div>
             </div>
           </div>
         </div>
@@ -1290,7 +1290,7 @@ claude</pre>
 
           <div class="border border-slate-200 rounded-lg p-5">
             <div class="text-sm font-semibold mb-2">♻️ Catalog fallback chains</div>
-            <p class="text-sm text-slate-600 leading-relaxed">Declare <code class="font-mono text-xs bg-slate-100 px-1 rounded">fallback: [next-id, …]</code> in catalog YAML. Router silently retries on engine error / timeout. Transparent to clients; visible in audit log.</p>
+            <p class="text-sm text-slate-600 leading-relaxed">Declare <code class="font-mono text-xs bg-slate-100 px-1 rounded">fallback: [next-id, …]</code> in catalog YAML. Router walks the chain in order on engine error / 5xx / timeout / model-not-loaded. Transparent to clients; visible in audit log.</p>
           </div>
 
           <div class="border border-slate-200 rounded-lg p-5">
@@ -1438,7 +1438,7 @@ n_abc123   mac-mini    darwin/arm64  ready</pre>
               <tr><td class="p-3 font-mono text-xs">qwen3-8b</td><td class="p-3">general chat, balanced</td><td class="p-3">5.2 GB</td><td class="p-3">12 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">mellum2-12b</td><td class="p-3">JetBrains coder MoE (2.5 B active, Apache-2.0)</td><td class="p-3">7.0 GB</td><td class="p-3">12 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">mistral-nemo-12b</td><td class="p-3">128 K context, multilingual</td><td class="p-3">7.1 GB</td><td class="p-3">12 GB</td></tr>
-              <tr><td class="p-3 font-mono text-xs">gemma4-12b</td><td class="p-3">encoder-free any-to-any (text/image/audio/video)</td><td class="p-3">7.6 GB</td><td class="p-3">12 GB</td></tr>
+              <tr><td class="p-3 font-mono text-xs">gemma4-12b</td><td class="p-3">multimodal (text + image; audio declared, route pending)</td><td class="p-3">7.6 GB</td><td class="p-3">12 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen3-14b</td><td class="p-3">more capable Qwen 3 chat</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3">code + agent (proven)</td><td class="p-3">9.0 GB</td><td class="p-3">16 GB</td></tr>
               <tr><td class="p-3 font-mono text-xs">phi-4-14b</td><td class="p-3">strong reasoning per byte</td><td class="p-3">9.1 GB</td><td class="p-3">12 GB</td></tr>
@@ -1837,7 +1837,7 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
 
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-6">
-            <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped (v0.6)</h3>
+            <h3 class="font-semibold text-emerald-900 mb-3">✓ Shipped</h3>
             <ul class="space-y-1.5 text-sm text-emerald-900">
               <li>• OpenAI + Anthropic API surface, streaming, tool use</li>
               <li>• Ollama / vLLM / MLX / llama.cpp drivers (single-node + RPC)</li>
@@ -1848,25 +1848,26 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
               <li>• Sharding auto-orchestration with <strong>shard crash auto-restart</strong></li>
               <li>• <strong>Coordinator placement on the strongest worker</strong> (not just leader)</li>
               <li>• <strong>Auto-distribution of GGUF weights</strong> from leader to shard hosts (sha256-verified)</li>
-              <li>• Vision (image input on chat) + embeddings (Ollama path)</li>
-              <li>• Catalog fallback chains + hardware-floor refusal + license metadata (37 models)</li>
+              <li>• Vision (<code>image_url</code> via Ollama) + embeddings (<code>/v1/embeddings</code>)</li>
+              <li>• Catalog fallback chains + hardware-floor refusal + license metadata (37 models, all with <code>released:</code> dates)</li>
+              <li>• <strong>Latency-aware fallback</strong> (p95 trigger; opt-in via <code>FLOCK_LATENCY_P95_SECONDS</code>)</li>
               <li>• <strong>Bedrock SigV4 signing</strong> (anthropic.* family) + Vertex ADC probe</li>
-              <li>• <strong>OTLP traces end-to-end</strong>: HTTP → router → engine with token counts</li>
+              <li>• <strong>OTLP traces end-to-end</strong> across all four engine drivers</li>
+              <li>• <strong>Engine health watchdog</strong> + typed <code>engine_unreachable</code> errors with start hints</li>
               <li>• Reference Grafana dashboards (cluster, per-model, per-node)</li>
-              <li>• 18-client <code>flock connect</code> roster + Open WebUI desktop pairing</li>
-              <li>• Embedded web UI with full CLI parity</li>
-              <li>• Install one-liner + signed binaries + 2-node smoke script</li>
+              <li>• 19-client <code>flock connect</code> roster</li>
+              <li>• Embedded web UI: home sparkline + p50/p95/p99 + catalog browser + worker join modal + toast notifications + live polling</li>
+              <li>• CLI ergonomics: interactive picker · shell completion · <code>--json</code> · <code>--summary</code> · <code>--dry-run</code> · first-run wizard · real progress bar · colored output · did-you-mean</li>
+              <li>• Install one-liner + signed binaries + .deb / .rpm packages + 2-node smoke script</li>
             </ul>
           </div>
 
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <h3 class="font-semibold text-blue-900 mb-3">→ Next (v0.7+)</h3>
+            <h3 class="font-semibold text-blue-900 mb-3">→ Next</h3>
             <ul class="space-y-1.5 text-sm text-blue-900">
               <li>• Bedrock streaming + non-Anthropic body shapes (amazon, meta, mistral)</li>
               <li>• Vertex body translation (OpenAI/Anthropic → generateContent)</li>
-              <li>• OTLP child spans across vLLM / MLX / llamacpp drivers</li>
-              <li>• Latency-aware fallback (p95 TTFT trigger)</li>
-              <li>• Edge runtime packages (.deb / NAS .spk)</li>
+              <li>• NAS .spk packages (Synology DSM)</li>
               <li>• Tailscale (<code>tsnet</code>) mesh for NAT traversal + mTLS</li>
               <li>• LoRA adapter loading + live model migration</li>
               <li>• Rerank (Cohere shape) + Anthropic extended thinking</li>
