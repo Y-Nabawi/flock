@@ -1273,7 +1273,7 @@ Persistent top-bar chips (every view) show: role (leader/worker), engine reachab
 |---|---|
 | **Dashboard (home)** | 4 KPI cards (nodes, models, requests, tokens served); latency card with p50/p95/p99; tier-colored error-rate card; top-model card; full-width SVG sparkline of requests-per-minute over the last 60 minutes; recent-activity strip (last 6 requests with outcome badges); copy-paste curl example |
 | **Nodes** | List + status; **Add a worker** modal generates a one-time node-scope token and shows both an install-and-join curl one-liner and a `flock join` command for boxes that already have the binary; per-row **drain** and **remove** with confirmation |
-| **Models** | Installed models table; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button); per-row **unload** button (drop from engine RAM, keep weights on disk) and **remove** button with confirmation (auto-handles sharded teardown) |
+| **Models** | Installed models table with per-row **test** (opens Playground pre-wired to the model), **unload** (drop from engine RAM, keep weights on disk), and **remove** (confirmed; auto-handles sharded teardown) buttons; **filterable catalog browser** (search, sort by size/newest/id, hide-installed toggle, color-coded license badge, per-row Install button) |
 | **Shards** | List shards grouped by sharded model; **Create sharded model** form (id + shard count); per-model **Tear down** button |
 | **Tokens** | List API keys (id/name/scope/quota/status); **Create** form with name + scope (user/admin/node) + daily quota; **Revoke** button per row; new keys shown ONCE in a modal |
 | **Usage** | Recent inference records: time, user, model, protocol, tokens, latency, outcome (live polling) |
@@ -1281,6 +1281,9 @@ Persistent top-bar chips (every view) show: role (leader/worker), engine reachab
 | **Settings** | Read-only effective config with secrets redacted; instructions for editing `~/.flock/config.yaml` and the env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `FLOCK_*`) |
 
 Mutating actions surface results via a toast notification (bottom-right, 3 s auto-dismiss) instead of inline error sprawl.
+
+Keyboard shortcuts (vim-style leader sequence; skipped while typing in any input):
+`g d` Dashboard · `g c` Connect · `g p` Playground · `g n` Nodes · `g m` Models · `g h` Shards · `g t` Tokens · `g u` Usage · `g a` Audit · `g s` Settings · `?` help · `Esc` close modals. Click the `?` chip in the top bar for the same cheatsheet.
 
 ## CLI vs UI parity
 

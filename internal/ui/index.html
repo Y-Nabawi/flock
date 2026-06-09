@@ -31,6 +31,9 @@
         </div>
         <div class="flex items-center gap-3">
           <div id="topChips" class="flex items-center gap-2 text-xs"></div>
+          <button onclick="showShortcutsModal()" title="Keyboard shortcuts" class="text-slate-400 hover:text-white text-xs">
+            <kbd class="font-mono bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">?</kbd>
+          </button>
           <div id="keyStatus" class="text-xs"></div>
         </div>
       </div>
@@ -185,6 +188,95 @@ function toast(message, kind = "info") {
   host.appendChild(el);
   setTimeout(() => el.remove(), 3000);
 }
+
+// Keyboard shortcuts — vim-style g+letter leader sequence and ? for help.
+// Skips when the focus is in an input / textarea / contenteditable so it
+// doesn't fight with typing in the Playground or filter boxes.
+const SHORTCUTS = {
+  d: { view: "dashboard", label: "Dashboard" },
+  c: { view: "connect",   label: "Connect" },
+  p: { view: "playground",label: "Playground" },
+  n: { view: "nodes",     label: "Nodes" },
+  m: { view: "models",    label: "Models" },
+  h: { view: "shards",    label: "Shards" },
+  t: { view: "tokens",    label: "Tokens" },
+  u: { view: "usage",     label: "Usage" },
+  a: { view: "audit",     label: "Audit" },
+  s: { view: "settings",  label: "Settings" },
+};
+let leaderArmed = false;
+let leaderTimer = null;
+
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = (el.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (isTypingTarget(e.target)) return;
+  // ? — open the shortcut cheatsheet.
+  if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+    e.preventDefault();
+    showShortcutsModal();
+    return;
+  }
+  // Esc — clear any pending leader state and close open modals.
+  if (e.key === "Escape") {
+    leaderArmed = false;
+    document.querySelectorAll(".fixed.inset-0.bg-black\\/40").forEach((m) => m.remove());
+    return;
+  }
+  if (leaderArmed) {
+    leaderArmed = false;
+    if (leaderTimer) { clearTimeout(leaderTimer); leaderTimer = null; }
+    const target = SHORTCUTS[e.key.toLowerCase()];
+    if (target) {
+      e.preventDefault();
+      switchView(target.view);
+      toast(`→ ${target.label}`, "info");
+    }
+    return;
+  }
+  if (e.key === "g") {
+    leaderArmed = true;
+    leaderTimer = setTimeout(() => { leaderArmed = false; leaderTimer = null; }, 1500);
+    return;
+  }
+});
+
+function showShortcutsModal() {
+  // Skip if one's already open.
+  if (document.getElementById("shortcutsModal")) return;
+  const rows = Object.entries(SHORTCUTS).map(([k, v]) =>
+    `<div class="flex justify-between text-sm py-1 border-b border-slate-100 last:border-0">
+       <span><kbd class="font-mono bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5 text-xs">g</kbd> <kbd class="font-mono bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5 text-xs">${k}</kbd></span>
+       <span class="text-slate-600">${v.label}</span>
+     </div>`).join("");
+  const div = document.createElement("div");
+  div.id = "shortcutsModal";
+  div.className = "fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6";
+  div.innerHTML = `
+    <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+      <div class="flex justify-between items-start mb-3">
+        <div class="text-lg font-semibold">Keyboard shortcuts</div>
+        <button class="text-slate-400 hover:text-slate-700" onclick="this.closest('.fixed').remove()">✕</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-3">Type the leader key, then the destination. Disabled while typing in an input.</p>
+      ${rows}
+      <div class="flex justify-between text-sm py-1 mt-2 border-t border-slate-200 pt-2">
+        <span><kbd class="font-mono bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5 text-xs">?</kbd></span>
+        <span class="text-slate-600">This help</span>
+      </div>
+      <div class="flex justify-between text-sm py-1">
+        <span><kbd class="font-mono bg-slate-100 border border-slate-300 rounded px-1.5 py-0.5 text-xs">Esc</kbd></span>
+        <span class="text-slate-600">Close modal / cancel leader</span>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+}
+
 function renderKeyStatus() {
   const masked = API_KEY ? API_KEY.slice(0, 9) + "…" : "no key";
   $("#keyStatus").innerHTML = `<span class="text-slate-400">key:</span> <span class="font-mono">${masked}</span> <button id="signout" class="ml-2 text-slate-400 hover:text-white underline">sign out</button>`;
@@ -561,6 +653,28 @@ async function renderPlayground() {
           <pre id="pgEmbedPre" class="bg-slate-50 border border-slate-200 rounded p-3 font-mono overflow-x-auto"></pre>
         </div>
       </div>`;
+
+    // Honor a Test-in-Playground request from the Models tab.
+    if (pendingPlaygroundModel) {
+      const sel = $("#pgModel");
+      const embedSel = $("#pgEmbedModel");
+      // The /v1/models list might not include just-installed entries
+      // until the next poll, so inject an option for the requested id
+      // if it's missing.
+      const optExists = Array.from(sel.options).some((o) => o.value === pendingPlaygroundModel);
+      if (!optExists) {
+        const o = document.createElement("option");
+        o.value = pendingPlaygroundModel;
+        o.textContent = pendingPlaygroundModel;
+        sel.appendChild(o);
+        const o2 = o.cloneNode(true);
+        embedSel.appendChild(o2);
+      }
+      sel.value = pendingPlaygroundModel;
+      embedSel.value = pendingPlaygroundModel;
+      pendingPlaygroundModel = null;
+      $("#pgUser").focus();
+    }
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
   }
@@ -1041,6 +1155,7 @@ async function renderModels() {
         m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
         new Date(m.InstalledAt).toLocaleString(),
         `<div class="flex gap-3">
+           <button class="text-xs text-emerald-700 hover:underline" onclick="testInPlayground('${m.CatalogID}')" title="Open Playground pre-wired to this model">test</button>
            <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${m.CatalogID}')" title="Drop the model from engine RAM without deleting weights">unload</button>
            <button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>
          </div>`,
@@ -1153,6 +1268,15 @@ async function removeModel(id) {
   } catch (e) {
     toast(`Remove failed: ${e.message}`, "err");
   }
+}
+
+// testInPlayground stashes a model id and switches to the Playground
+// tab. renderPlayground consumes the stash on next render and pre-
+// selects the model + focuses the message box.
+let pendingPlaygroundModel = null;
+function testInPlayground(id) {
+  pendingPlaygroundModel = id;
+  switchView("playground");
 }
 
 // unloadModel asks the engine to drop the model from RAM without
