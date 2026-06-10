@@ -32,6 +32,9 @@ func cmdModel(args []string) {
 			"flock model add llama-3.2-3b      # install (auto-delegates if sharded)",
 			"flock model add llama-3.3-70b --force      # bypass the hardware floor check",
 			"flock model add qwen3.6-27b --dry-run      # preview download size, RAM, engine — no pull",
+			"flock model add hf:bartowski/Phi-3-mini-GGUF   # any HuggingFace repo (skips catalog)",
+			"flock model add ollama:phi3:mini  # any Ollama tag (must be using ollama engine)",
+			"flock model add file:/tmp/my.gguf # a pre-downloaded GGUF on disk",
 			"flock model ls                    # list installed models",
 			"flock model remove llama-3.2-3b   # uninstall (prompts; pass --yes to skip)",
 			"flock model unload llama-3.2-3b   # drop from engine RAM without deleting weights (Ollama)",
@@ -52,6 +55,18 @@ func cmdModel(args []string) {
 	switch args[0] {
 	case "add":
 		id, force, dryRun := parseModelAddArgs(args[1:])
+		// Scheme-prefixed ids (hf:, ollama:, file:) skip the catalog lookup
+		// entirely — they describe a model we know how to install but have
+		// no curated YAML for. Hardware-floor and dry-run plans both fall
+		// through to the same engine pull.
+		if entry, ok := models.ParseSchemeID(id); ok {
+			if dryRun {
+				modelAddDryRun(id)
+				return
+			}
+			modelAddEntry(entry, force)
+			return
+		}
 		if id == "" || !catalogHasID(id) {
 			id = pickCatalogID("Pick a model to install:", id)
 			if id == "" {
@@ -245,10 +260,18 @@ func parseModelAddArgs(args []string) (id string, force bool, dryRun bool) {
 
 // modelAddDryRun prints the plan for installing `id` without actually
 // pulling weights. Useful for sanity-checking before a long download.
+// Accepts both catalog ids and scheme-prefixed ids (hf:/ollama:/file:);
+// the scheme path skips the catalog lookup since these models have no
+// pre-known size, license, or hardware floor.
 func modelAddDryRun(id string) {
 	cfg := loadConfigOrExit()
-	cat := loadCatalogOrExit(cfg)
-	entry := models.FindByID(cat, id)
+	var entry *models.Entry
+	if e, ok := models.ParseSchemeID(id); ok {
+		entry = e
+	} else {
+		cat := loadCatalogOrExit(cfg)
+		entry = models.FindByID(cat, id)
+	}
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
 	}
@@ -261,7 +284,9 @@ func modelAddDryRun(id string) {
 	if entry.SizeBytes > 0 {
 		fmt.Printf("  %sDownload size%s %.1f GB\n", bold, reset, float64(entry.SizeBytes)/1e9)
 	}
-	fmt.Printf("  %sMin RAM%s       %d GB\n", bold, reset, entry.Hardware.MinRAMGB)
+	if entry.Hardware.MinRAMGB > 0 {
+		fmt.Printf("  %sMin RAM%s       %d GB\n", bold, reset, entry.Hardware.MinRAMGB)
+	}
 	if entry.Hardware.MinVRAMGB > 0 {
 		fmt.Printf("  %sMin VRAM%s      %d GB\n", bold, reset, entry.Hardware.MinVRAMGB)
 	}
@@ -284,7 +309,9 @@ func modelAddDryRun(id string) {
 		} else {
 			fmt.Printf("  %sEngine status%s %sreachable%s\n", bold, reset, dim, reset)
 		}
-		if msg := checkHardwareForModel(entry); msg != "" {
+		if entry.Hardware.MinRAMGB == 0 {
+			fmt.Printf("  %sHardware%s      %sno floor known — install will skip the pre-flight check%s\n", bold, reset, dim, reset)
+		} else if msg := checkHardwareForModel(entry); msg != "" {
 			fmt.Printf("  %sHardware%s      %s%s%s — would refuse without --force\n", bold, reset, dim, msg, reset)
 		} else {
 			fmt.Printf("  %sHardware%s      %sOK%s\n", bold, reset, dim, reset)
@@ -304,37 +331,63 @@ func modelAdd(id string, force bool) {
 	if id == "" {
 		die("usage: flock model add <id> [--force]")
 	}
-	cfg := loadConfigOrExit()
-	cat := loadCatalogOrExit(cfg)
+	cat := loadCatalogOrExit(loadConfigOrExit())
 	entry := models.FindByID(cat, id)
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
 	}
+	modelAddEntry(entry, force)
+}
+
+// modelAddEntry runs the install flow for an already-resolved entry —
+// either a catalog row (from `models.FindByID`) or a synthetic one built
+// by `models.ParseSchemeID` for hf:/ollama:/file: ids. Shared because the
+// hardware check, engine pull, and store/placement upsert are identical;
+// only the entry source differs.
+//
+// For scheme-prefixed (custom) entries, SizeBytes and Hardware are zero
+// so the hardware-floor check naturally short-circuits — we warn instead
+// of refusing.
+func modelAddEntry(entry *models.Entry, force bool) {
+	cfg := loadConfigOrExit()
 
 	// Pre-install hardware check — refuse if this machine clearly can't
 	// run the model. Cheap to compute and saves the user a long failing
 	// pull. Sharded entries are exempt (sharding is how you fit a model
-	// that doesn't fit on any single node).
+	// that doesn't fit on any single node). Custom entries (no known
+	// hardware floor) skip the check with a soft warning.
 	if !entry.Sharding.Required {
-		if msg := checkHardwareForModel(entry); msg != "" {
-			if force {
-				warn(os.Stdout, "%s — proceeding because --force was set", msg)
-			} else {
-				die("%s\n  (override with `flock model add %s --force` if you know what you're doing)", msg, id)
+		if entry.Hardware.MinRAMGB > 0 {
+			if msg := checkHardwareForModel(entry); msg != "" {
+				if force {
+					warn(os.Stdout, "%s — proceeding because --force was set", msg)
+				} else {
+					die("%s\n  (override with `flock model add %s --force` if you know what you're doing)", msg, entry.ID)
+				}
 			}
+		} else {
+			warn(os.Stdout, "no hardware floor known for %s — proceeding without check (use a catalog model for pre-flight checks)", entry.ID)
 		}
 	}
 
 	// Sharded model? Hand off to the shard orchestrator on the leader.
 	if entry.Sharding.Required {
-		note(os.Stdout, "%s requires sharding — delegating to `flock shard create`", id)
-		shardCreate(id, 0)
+		note(os.Stdout, "%s requires sharding — delegating to `flock shard create`", entry.ID)
+		shardCreate(entry.ID, 0)
 		return
 	}
 
 	st := openStoreOrExit(cfg)
 	defer st.Close()
 	eng := newEngineFromConfig(cfg)
+
+	// Refuse early if the source scheme has no path through this engine
+	// (e.g. `ollama:foo` while the configured engine is vllm). The engine
+	// would otherwise fail mid-pull with a less-obvious error.
+	if !sourceCompatibleWithEngine(entry.Source.Type, eng.Name()) {
+		die("source type %q in %s is not compatible with engine %s — switch engines or use a different scheme prefix",
+			entry.Source.Type, entry.ID, eng.Name())
+	}
 
 	// Pick the engine-native model name based on which engine we're using.
 	engineName := engineNativeName(eng.Name(), entry)
@@ -369,6 +422,29 @@ func modelAdd(id string, force bool) {
 		LastSeen: time.Now(),
 	})
 	ok(os.Stdout, "installed: %s", entry.ID)
+}
+
+// sourceCompatibleWithEngine reports whether a catalog (or synthetic)
+// source type can be served by the named engine. Used as a pre-flight
+// guard before kicking off the pull, so the user gets a clear "switch
+// engines" message instead of a cryptic engine-side 404.
+//
+// An empty source type (older catalog entries) is treated as compatible
+// — the engine will decide.
+func sourceCompatibleWithEngine(sourceType, engineName string) bool {
+	switch sourceType {
+	case "", "auto":
+		return true
+	case "ollama":
+		return engineName == "ollama"
+	case "huggingface":
+		return engineName == "vllm" || engineName == "mlx" || engineName == "mlx-lm" ||
+			strings.HasPrefix(engineName, "llamacpp") || strings.HasPrefix(engineName, "llama-cpp")
+	case "file":
+		return engineName == "mlx" || engineName == "mlx-lm" ||
+			strings.HasPrefix(engineName, "llamacpp") || strings.HasPrefix(engineName, "llama-cpp")
+	}
+	return true
 }
 
 // engineNativeName picks the right field from the catalog source for a given

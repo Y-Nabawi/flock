@@ -130,6 +130,63 @@ func FindByID(entries []Entry, id string) *Entry {
 	return nil
 }
 
+// ParseSchemeID recognizes the `hf:`, `ollama:`, and `file:` prefixes used by
+// `flock model add` to pull a model that has no curated catalog entry, and
+// returns a synthetic Entry the install flow can consume.
+//
+//   - hf:owner/repo            → Source.Type=huggingface, Repo=owner/repo
+//   - hf:owner/repo:file.gguf  → Source.Type=huggingface, Repo=owner/repo, File=file.gguf
+//   - ollama:phi3              → Source.Type=ollama, OllamaName=phi3
+//   - ollama:phi3:mini         → Source.Type=ollama, OllamaName=phi3:mini
+//   - file:/abs/path/x.gguf    → Source.Type=file, Path=/abs/path/x.gguf
+//
+// The synthetic entry uses the full scheme-prefixed id as both ID and
+// DisplayName, and leaves hardware/size unset so the install flow knows to
+// skip the hardware-floor check. Returns (nil, false) for ids that don't
+// match any known scheme — callers should fall through to catalog lookup.
+func ParseSchemeID(id string) (*Entry, bool) {
+	switch {
+	case strings.HasPrefix(id, "hf:"):
+		rest := strings.TrimPrefix(id, "hf:")
+		if rest == "" || !strings.Contains(rest, "/") {
+			return nil, false
+		}
+		repo, file := rest, ""
+		// Optional "owner/repo:filename.gguf" — split on the last colon
+		// after the slash so colons inside the repo path (none today, but
+		// future-proof) wouldn't break parsing.
+		if i := strings.LastIndex(rest, ":"); i > strings.Index(rest, "/") {
+			repo, file = rest[:i], rest[i+1:]
+		}
+		return &Entry{
+			ID:          id,
+			DisplayName: id,
+			Source:      SourceSpec{Type: "huggingface", Repo: repo, File: file},
+		}, true
+	case strings.HasPrefix(id, "ollama:"):
+		name := strings.TrimPrefix(id, "ollama:")
+		if name == "" {
+			return nil, false
+		}
+		return &Entry{
+			ID:          id,
+			DisplayName: id,
+			Source:      SourceSpec{Type: "ollama", OllamaName: name},
+		}, true
+	case strings.HasPrefix(id, "file:"):
+		path := strings.TrimPrefix(id, "file:")
+		if path == "" {
+			return nil, false
+		}
+		return &Entry{
+			ID:          id,
+			DisplayName: id,
+			Source:      SourceSpec{Type: "file", Path: path},
+		}, true
+	}
+	return nil, false
+}
+
 func resolveCatalogDir() string {
 	if d := os.Getenv("FLOCK_CATALOG_DIR"); d != "" {
 		if _, err := os.Stat(d); err == nil {

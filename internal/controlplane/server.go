@@ -557,9 +557,17 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	entry := models.FindByID(s.cat, req.ID)
+	// Scheme-prefixed ids (hf:/ollama:/file:) bypass the catalog so the
+	// dashboard "Add custom model" input can install anything the engine
+	// supports — same surface as `flock model add hf:owner/repo`.
+	var entry *models.Entry
+	if e, ok := models.ParseSchemeID(req.ID); ok {
+		entry = e
+	} else {
+		entry = models.FindByID(s.cat, req.ID)
+	}
 	if entry == nil {
-		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ID)
+		writeJSONError(w, http.StatusNotFound, "no catalog entry for "+req.ID+" (try a scheme-prefixed id like hf:owner/repo, ollama:tag, or file:/path)")
 		return
 	}
 	// Sharded models delegate to the orchestrator.
@@ -585,6 +593,16 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 		engineName = entry.Source.OllamaName
 	case "vllm", "mlx", "mlx-lm":
 		engineName = entry.Source.Repo
+		if engineName == "" {
+			engineName = entry.Source.Path
+		}
+	default:
+		// llamacpp variants accept either an HF repo (-hf) or a local path (-m).
+		if entry.Source.Repo != "" {
+			engineName = entry.Source.Repo
+		} else if entry.Source.Path != "" {
+			engineName = entry.Source.Path
+		}
 	}
 	if engineName == "" {
 		engineName = entry.ID

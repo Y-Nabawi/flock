@@ -87,6 +87,19 @@ Use the [picker table above](#-picker-table--what-to-install). It covers every m
 
 The per-model walkthroughs below cover a curated subset with full install + client snippets. For every other catalog entry, run `flock model info <id>` for the same metadata (size, RAM, capabilities, license, release date, engine compatibility), or open a [catalog issue](https://github.com/hadihonarvar/flock/issues/new?template=catalog_request.yml) if you'd like a full walkthrough added.
 
+### Installing models that aren't in the catalog
+
+`flock model add` accepts three scheme prefixes that bypass the catalog and pull anything the configured engine can serve. The hardware-floor check is skipped (no curated `min_ram_gb` to compare against), so the user is responsible for picking weights that fit.
+
+```bash
+flock model add hf:Qwen/Qwen3-72B-AWQ           # vLLM / MLX / llama-server
+flock model add hf:bartowski/Phi-3-mini-GGUF:Phi-3-mini-4k-instruct.Q4_K_M.gguf
+flock model add ollama:phi3:mini                # ollama engine only
+flock model add file:/abs/path/my-finetune.gguf # llama-server / MLX, pre-downloaded
+```
+
+The dashboard's **Models** tab has the same input under "Add custom model".
+
 ---
 
 ## Table of contents (curated walkthroughs)

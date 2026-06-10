@@ -1222,6 +1222,19 @@ async function renderModels() {
 
       <div class="bg-white border border-slate-200 rounded mt-6">
         <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
+          <div class="text-sm font-semibold">Add custom model</div>
+          <input id="customModelInput" type="text"
+                 placeholder="hf:owner/repo · ollama:tag · file:/abs/path.gguf"
+                 class="flex-1 min-w-[280px] border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                 onkeydown="if(event.key==='Enter')addCustomModel()" />
+          <button onclick="addCustomModel()"
+                  class="bg-slate-900 text-white px-3 py-1 rounded text-sm hover:bg-slate-800">Install</button>
+          <p class="text-xs text-slate-500 w-full">Skips the curated catalog. Anything the configured engine can pull works here.</p>
+        </div>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded mt-6">
+        <div class="p-4 border-b border-slate-200 flex items-center gap-3 flex-wrap">
           <div class="text-sm font-semibold">Catalog browser</div>
           <input id="catFilter" type="text" placeholder="filter by id / name / capability / tag…" class="flex-1 min-w-[200px] border border-slate-300 rounded px-2 py-1 text-sm" oninput="renderCatalogTable()" />
           <select id="catSort" class="border border-slate-300 rounded px-2 py-1 text-sm" onchange="renderCatalogTable()">
@@ -1308,6 +1321,31 @@ async function addModelFromBrowser(id, btn) {
     toast(`Install failed: ${e.message}`, "err");
     btn.disabled = false;
     btn.textContent = "Install";
+  }
+}
+
+// addCustomModel posts a scheme-prefixed id (hf:/ollama:/file:) to the
+// admin endpoint. The server's addModel handler bypasses the catalog
+// when it recognizes a scheme. Mirrors `flock model add <scheme:…>`.
+async function addCustomModel() {
+  const input = document.getElementById("customModelInput");
+  if (!input) return;
+  const id = (input.value || "").trim();
+  if (!id) {
+    toast("Enter a scheme-prefixed id (hf:/ollama:/file:)", "err");
+    return;
+  }
+  if (!/^(hf|ollama|file):/.test(id)) {
+    toast("ID must start with hf:, ollama:, or file:", "err");
+    return;
+  }
+  try {
+    await api("/admin/v1/models", { method: "POST", body: JSON.stringify({ id }) });
+    toast(`Installed ${id}`, "ok");
+    input.value = "";
+    await renderModels();
+  } catch (e) {
+    toast(`Install failed: ${e.message}`, "err");
   }
 }
 
