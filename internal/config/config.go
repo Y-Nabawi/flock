@@ -45,6 +45,11 @@ type EngineConfig struct {
 	VLLMAPIKey       string `yaml:"-"` // populated from VLLM_API_KEY env
 	MLXEndpoint      string `yaml:"mlx_endpoint"`
 	LlamaCppEndpoint string `yaml:"llamacpp_endpoint"`
+	// WhisperEndpoint and PiperEndpoint are optional engines for the
+	// audio endpoints; the gateway proxies to them when set and
+	// returns 501 with a setup hint otherwise.
+	WhisperEndpoint string `yaml:"whisper_endpoint"`
+	PiperEndpoint   string `yaml:"piper_endpoint"`
 }
 
 type RouterConfig struct {
@@ -268,6 +273,12 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FLOCK_LLAMACPP_ENDPOINT"); v != "" {
 		c.Engine.LlamaCppEndpoint = v
+	}
+	if v := os.Getenv("FLOCK_WHISPER_ENDPOINT"); v != "" {
+		c.Engine.WhisperEndpoint = v
+	}
+	if v := os.Getenv("FLOCK_PIPER_ENDPOINT"); v != "" {
+		c.Engine.PiperEndpoint = v
 	}
 	if v := os.Getenv("FLOCK_ENGINE"); v != "" {
 		c.Engine.Preferred = v

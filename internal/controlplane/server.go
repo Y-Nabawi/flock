@@ -157,6 +157,13 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	api.SetCallbackDispatcher(dispatcher)
 	// Guardrails (pre-call hooks). Synchronous on the request path.
 	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, log))
+	// Audio + rerank endpoint proxies. Empty endpoints → handler
+	// returns 501 with setup hint instead of trying.
+	api.SetRerankAudioConfig(api.RerankAudioConfig{
+		LlamaCppEndpoint: cfg.Engine.LlamaCppEndpoint,
+		WhisperEndpoint:  cfg.Engine.WhisperEndpoint,
+		PiperEndpoint:    cfg.Engine.PiperEndpoint,
+	})
 	return &Server{
 		cfg:         cfg,
 		store:       st,
@@ -392,6 +399,9 @@ func (s *Server) routes() http.Handler {
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
 		r.Post("/embeddings", s.openaiH.Embeddings)
+		r.Post("/rerank", s.openaiH.Rerank)
+		r.Post("/audio/transcriptions", s.openaiH.AudioTranscriptions)
+		r.Post("/audio/speech", s.openaiH.AudioSpeech)
 		r.Post("/messages", s.dispatchAnthropicMessages)
 		r.Post("/messages/count_tokens", s.anthropicH.CountTokens)
 	})
