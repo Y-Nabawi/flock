@@ -15,6 +15,9 @@ func TestVendor_OpenAIGateways(t *testing.T) {
 		{"groq/llama-3.1-70b-versatile", "groq"},
 		{"together/Qwen/Qwen2.5-72B-Instruct-Turbo", "together"},
 		{"fireworks/accounts/fireworks/models/llama-v3p1-70b-instruct", "fireworks"},
+		{"cohere/command-r-plus", "cohere"},
+		{"mistral/mistral-large-latest", "mistral"},
+		{"perplexity/sonar-pro", "perplexity"},
 
 		// Existing routes must keep working.
 		{"claude-3-5-sonnet", "anthropic"},

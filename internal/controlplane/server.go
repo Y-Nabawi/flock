@@ -134,6 +134,12 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			TogetherURL:    cfg.Router.Fallback.TogetherURL,
 			FireworksKey:   cfg.Router.Fallback.FireworksKey,
 			FireworksURL:   cfg.Router.Fallback.FireworksURL,
+			CohereKey:      cfg.Router.Fallback.CohereKey,
+			CohereURL:      cfg.Router.Fallback.CohereURL,
+			MistralKey:     cfg.Router.Fallback.MistralKey,
+			MistralURL:     cfg.Router.Fallback.MistralURL,
+			PerplexityKey:  cfg.Router.Fallback.PerplexityKey,
+			PerplexityURL:  cfg.Router.Fallback.PerplexityURL,
 		},
 	}
 	buckets := api.NewBucketStore()
@@ -380,6 +386,15 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		case "fireworks":
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			s.egressH.ServeFireworks(w, r)
+		case "cohere":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeCohere(w, r)
+		case "mistral":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeMistral(w, r)
+		case "perplexity":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServePerplexity(w, r)
 		case "anthropic", "bedrock":
 			// Protocol mismatch: OpenAI-format request with a Claude model.
 			// Anthropic's API only accepts /v1/messages, so return an actionable

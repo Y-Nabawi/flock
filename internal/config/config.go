@@ -94,7 +94,8 @@ type FallbackConfig struct {
 
 	// OpenAI-compatible hosted gateways. The corresponding env vars
 	// (OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY,
-	// FIREWORKS_API_KEY) populate the key fields at runtime.
+	// FIREWORKS_API_KEY, COHERE_API_KEY, MISTRAL_API_KEY,
+	// PERPLEXITY_API_KEY) populate the key fields at runtime.
 	OpenRouterURL string `yaml:"openrouter_url"`
 	OpenRouterKey string `yaml:"-"`
 	GroqURL       string `yaml:"groq_url"`
@@ -103,6 +104,12 @@ type FallbackConfig struct {
 	TogetherKey   string `yaml:"-"`
 	FireworksURL  string `yaml:"fireworks_url"`
 	FireworksKey  string `yaml:"-"`
+	CohereURL     string `yaml:"cohere_url"`
+	CohereKey     string `yaml:"-"`
+	MistralURL    string `yaml:"mistral_url"`
+	MistralKey    string `yaml:"-"`
+	PerplexityURL string `yaml:"perplexity_url"`
+	PerplexityKey string `yaml:"-"`
 }
 
 // ObservabilityConfig holds knobs for traces/logs/metrics integrations
@@ -249,6 +256,18 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FIREWORKS_API_KEY"); v != "" {
 		c.Router.Fallback.FireworksKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("COHERE_API_KEY"); v != "" {
+		c.Router.Fallback.CohereKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("MISTRAL_API_KEY"); v != "" {
+		c.Router.Fallback.MistralKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("PERPLEXITY_API_KEY"); v != "" {
+		c.Router.Fallback.PerplexityKey = v
 		c.Router.Fallback.Enabled = true
 	}
 	if v := os.Getenv("FLOCK_OTLP_ENDPOINT"); v != "" {

@@ -395,7 +395,7 @@ flock token edit k_abc --clear-models                       # back to "any model
 ### Hybrid local + cloud
 
 - Built-in egress adapters for Anthropic + OpenAI; vendor model IDs (`claude-*`, `gpt-*`) transparently proxy upstream when `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set
-- **OpenAI-compatible hosted gateways** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>` route to OpenRouter / Groq / Together / Fireworks respectively (set the matching `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `TOGETHER_API_KEY` / `FIREWORKS_API_KEY`). The slash-namespaced prefix is stripped before forwarding so the upstream sees its native id (e.g. `openrouter/anthropic/claude-3-haiku` → `anthropic/claude-3-haiku` on OpenRouter).
+- **OpenAI-compatible hosted gateways** — `openrouter/<model>`, `groq/<model>`, `together/<model>`, `fireworks/<model>`, `cohere/<model>`, `mistral/<model>`, `perplexity/<model>` route to the matching vendor (set the corresponding `*_API_KEY`). The slash-namespaced prefix is stripped before forwarding so the upstream sees its native id (e.g. `openrouter/anthropic/claude-3-haiku` → `anthropic/claude-3-haiku` on OpenRouter; `mistral/mistral-large-latest` → `mistral-large-latest` on Mistral).
 - Failure-based fallback chain: any catalog entry can declare `fallback: [next-id, …]` and the router will try the chain in order on engine errors, 503s, or timeouts (transparent to the client)
 - **Per-request overrides** — clients can override the catalog chain for a single call. Body block (`flock.fallbacks`, `flock.num_retries`, `flock.retry_backoff_ms`) or `X-Flock-*` headers; the router walks the request chain instead of the catalog one and retries each candidate with exponential backoff (cap 5 retries, 5 s backoff). Traces tag `flock.fallback.source = catalog | request` so operators can see who's overriding policy.
 
@@ -760,6 +760,7 @@ observability:
 | `FLOCK_DEFAULT_MODEL` | `router.default_model` |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | enables `router.fallback` for the matching vendor |
 | `OPENROUTER_API_KEY` / `GROQ_API_KEY` / `TOGETHER_API_KEY` / `FIREWORKS_API_KEY` | enables passthrough to the matching OpenAI-compatible hosted gateway. Models named `openrouter/<id>` / `groq/<id>` / etc are routed; the prefix is stripped before forwarding |
+| `COHERE_API_KEY` / `MISTRAL_API_KEY` / `PERPLEXITY_API_KEY` | passthrough to Cohere / Mistral La Plateforme / Perplexity. Models named `cohere/<id>` / `mistral/<id>` / `perplexity/<id>` are routed |
 | `FLOCK_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$FLOCK_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.flock/catalog` (curl installer) → `/usr/local/share/flock/catalog` → `/usr/share/flock/catalog` (.deb/.rpm) |
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |

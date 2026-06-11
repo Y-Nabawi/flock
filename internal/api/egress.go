@@ -58,6 +58,12 @@ type FallbackConfig struct {
 	TogetherURL   string // default https://api.together.xyz/v1
 	FireworksKey  string
 	FireworksURL  string // default https://api.fireworks.ai/inference/v1
+	CohereKey     string
+	CohereURL     string // default https://api.cohere.com/compatibility/v1
+	MistralKey    string
+	MistralURL    string // default https://api.mistral.ai/v1
+	PerplexityKey string
+	PerplexityURL string // default https://api.perplexity.ai
 
 	EnabledModels map[string]bool
 }
@@ -82,6 +88,12 @@ func Vendor(model string) string {
 		return "together"
 	case strings.HasPrefix(model, "fireworks/"):
 		return "fireworks"
+	case strings.HasPrefix(model, "cohere/"):
+		return "cohere"
+	case strings.HasPrefix(model, "mistral/"):
+		return "mistral"
+	case strings.HasPrefix(model, "perplexity/"):
+		return "perplexity"
 
 	// Bedrock model IDs: "anthropic.*", "amazon.*", "meta.*", "mistral.*"
 	case strings.HasPrefix(model, "anthropic."),
@@ -263,6 +275,27 @@ func (e *EgressHandler) ServeFireworks(w http.ResponseWriter, r *http.Request) {
 		e.Config.FireworksKey,
 		orDefault(e.Config.FireworksURL, "https://api.fireworks.ai/inference/v1"),
 		"FIREWORKS_API_KEY")
+}
+func (e *EgressHandler) ServeCohere(w http.ResponseWriter, r *http.Request) {
+	// Cohere ships an OpenAI-compatible surface at /compatibility/v1
+	// that translates OpenAI message shape → Cohere's native shape
+	// server-side, so we get the same identity treatment as the rest.
+	e.serveOpenAICompatible(w, r, "cohere", "cohere/",
+		e.Config.CohereKey,
+		orDefault(e.Config.CohereURL, "https://api.cohere.com/compatibility/v1"),
+		"COHERE_API_KEY")
+}
+func (e *EgressHandler) ServeMistral(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "mistral", "mistral/",
+		e.Config.MistralKey,
+		orDefault(e.Config.MistralURL, "https://api.mistral.ai/v1"),
+		"MISTRAL_API_KEY")
+}
+func (e *EgressHandler) ServePerplexity(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "perplexity", "perplexity/",
+		e.Config.PerplexityKey,
+		orDefault(e.Config.PerplexityURL, "https://api.perplexity.ai"),
+		"PERPLEXITY_API_KEY")
 }
 
 // serveOpenAICompatible reads the inbound body, strips the gateway

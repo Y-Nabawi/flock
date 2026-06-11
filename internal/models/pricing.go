@@ -68,6 +68,29 @@ var vendorPriceTable = []struct {
 	{"o1", perMillion(15.00, 60.00)},
 	// Generic fallbacks.
 	{"gpt-", perMillion(2.50, 10.00)},
+
+	// ── Cohere (via cohere/<model> prefix) ──────────────────────
+	{"cohere/command-r-plus", perMillion(2.50, 10.00)},
+	{"cohere/command-r", perMillion(0.15, 0.60)},
+	{"cohere/command-a", perMillion(2.50, 10.00)},
+	{"cohere/command-", perMillion(2.50, 10.00)}, // family fallback
+
+	// ── Mistral La Plateforme (via mistral/<model> prefix) ─────
+	{"mistral/mistral-large", perMillion(2.00, 6.00)},
+	{"mistral/mistral-medium", perMillion(0.40, 2.00)},
+	{"mistral/mistral-small", perMillion(0.20, 0.60)},
+	{"mistral/ministral-8b", perMillion(0.10, 0.10)},
+	{"mistral/codestral", perMillion(0.20, 0.60)},
+	{"mistral/", perMillion(0.40, 2.00)}, // family fallback
+
+	// ── Perplexity (via perplexity/<model> prefix) ──────────────
+	// Per-query pricing for online models is the bigger cost; per-token
+	// rates below are for the LLM portion only — operators tracking
+	// per-call cost may want to add the search surcharge separately.
+	{"perplexity/sonar-pro", perMillion(3.00, 15.00)},
+	{"perplexity/sonar-reasoning", perMillion(1.00, 5.00)},
+	{"perplexity/sonar", perMillion(1.00, 1.00)},
+	{"perplexity/", perMillion(1.00, 5.00)}, // family fallback
 }
 
 // perMillion converts the (input, output) USD-per-million-tokens
