@@ -110,6 +110,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	if cfg.Router.StickySessionTTLSeconds > 0 {
 		routed.SetStickyTTL(time.Duration(cfg.Router.StickySessionTTLSeconds) * time.Second)
 	}
+	// Request hedging — opt-in per request via flock.hedge.
+	if cfg.Router.HedgeReplicas > 1 {
+		routed.SetHedgeReplicas(cfg.Router.HedgeReplicas)
+	}
 
 	openaiH := &api.Handler{
 		Engine:  routed,

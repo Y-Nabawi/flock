@@ -59,8 +59,32 @@ func TestOverrides_IsSet(t *testing.T) {
 	if !(Overrides{NumRetries: 1}).IsSet() {
 		t.Error("retries > 0 should be set")
 	}
+	if !(Overrides{Hedge: true}).IsSet() {
+		t.Error("hedge true should be set")
+	}
 	if (Overrides{RetryBackoffMS: 100}).IsSet() {
-		t.Error("backoff alone is not 'set' — only retries/fallbacks turn the path on")
+		t.Error("backoff alone is not 'set' — only retries/fallbacks/hedge turn the path on")
+	}
+}
+
+// TestSetHedgeReplicas_Clamps verifies the documented caps.
+func TestSetHedgeReplicas_Clamps(t *testing.T) {
+	r := &Router{}
+	r.SetHedgeReplicas(0)
+	if r.hedgeReplicas != 0 {
+		t.Errorf("0 → disable, got %d", r.hedgeReplicas)
+	}
+	r.SetHedgeReplicas(1)
+	if r.hedgeReplicas != 0 {
+		t.Errorf("1 → disable (one replica is not hedging), got %d", r.hedgeReplicas)
+	}
+	r.SetHedgeReplicas(2)
+	if r.hedgeReplicas != 2 {
+		t.Errorf("2 → 2, got %d", r.hedgeReplicas)
+	}
+	r.SetHedgeReplicas(100)
+	if r.hedgeReplicas != MaxHedgeReplicas {
+		t.Errorf("100 → clamp to %d, got %d", MaxHedgeReplicas, r.hedgeReplicas)
 	}
 }
 

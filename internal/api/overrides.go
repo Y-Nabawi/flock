@@ -56,6 +56,7 @@ func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
 		o.Fallbacks = body.Fallbacks
 		o.NumRetries = body.NumRetries
 		o.RetryBackoffMS = body.RetryBackoffMS
+		o.Hedge = body.Hedge
 	}
 	// Headers fill in only when the body left a field zero. Body wins so
 	// a client can be explicit about overriding a proxy-injected header.
@@ -76,6 +77,11 @@ func mergeBodyAndHeaders(body *flockExtras, h http.Header) router.Overrides {
 			if n, err := strconv.Atoi(v); err == nil {
 				o.RetryBackoffMS = n
 			}
+		}
+	}
+	if !o.Hedge {
+		if v := h.Get("X-Flock-Hedge"); v == "1" || v == "true" {
+			o.Hedge = true
 		}
 	}
 	return o

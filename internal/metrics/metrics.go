@@ -125,6 +125,18 @@ func ObserveCacheHit(path string) { cacheHitsTotal.WithLabelValues(path).Inc() }
 // ObserveCacheMiss records a response-cache miss on the given endpoint.
 func ObserveCacheMiss(path string) { cacheMissesTotal.WithLabelValues(path).Inc() }
 
+var routerHedgeTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "flock_router_hedge_total",
+	Help: "Per-replica outcomes for hedged requests (win|cancelled|error).",
+}, []string{"outcome"})
+
+// ObserveRouterHedge records one replica's outcome.
+//
+// outcome ∈ {"win","cancelled","error"}.
+func ObserveRouterHedge(outcome string) {
+	routerHedgeTotal.WithLabelValues(outcome).Inc()
+}
+
 // ObserveStickyOutcome bumps the per-outcome counter for sticky-session
 // behavior. outcome ∈ {"hit", "miss", "expired"}.
 func ObserveStickyOutcome(outcome string) {

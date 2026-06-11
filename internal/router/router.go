@@ -131,6 +131,13 @@ type Router struct {
 	// effective resolved model may change between turns).
 	stickyTTL time.Duration
 
+	// Hedging: when > 1 the router can fire a single request to
+	// hedgeReplicas least-loaded workers concurrently and return
+	// whichever responds first. Opt-in per request (via
+	// Overrides.Hedge). 0 / 1 disables. Hard-capped at MaxHedgeReplicas
+	// in the setter.
+	hedgeReplicas int
+
 	mu          sync.RWMutex
 	inflight    map[string]int            // node_id → live request count
 	remotes     map[string]engines.Engine // node_id → cached remote engine
@@ -160,6 +167,29 @@ func New(local engines.Engine, st store.Store) *Router {
 		stickiness: make(map[string]stickyEntry),
 		latency:    newLatencyStats(LatencyConfig{}),
 	}
+}
+
+// MaxHedgeReplicas caps the per-request fan-out so a misconfigured
+// client can't burn 50× the engine cost in one call. Three is enough
+// to cut tail latency without the cost getting silly.
+const MaxHedgeReplicas = 3
+
+// SetHedgeReplicas enables request hedging. When a request opts in
+// via Overrides.Hedge the router fires the call to the top-N
+// least-loaded workers concurrently and returns whichever responds
+// first; the losers' contexts are cancelled.
+//
+// n ≤ 1 disables hedging entirely. Values above MaxHedgeReplicas are
+// silently clamped.
+func (r *Router) SetHedgeReplicas(n int) {
+	if n <= 1 {
+		r.hedgeReplicas = 0
+		return
+	}
+	if n > MaxHedgeReplicas {
+		n = MaxHedgeReplicas
+	}
+	r.hedgeReplicas = n
 }
 
 // SetStickyTTL turns on per-(user_id, model) session stickiness with
@@ -731,6 +761,17 @@ func waitBackoff(ctx context.Context, retry, initialMS int) error {
 // goroutine that drains the inner stream — so its duration matches actual
 // time-to-completion, not just the time to start the stream.
 func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engines.StreamEvent, error) {
+	// Hedging short-circuit: when the request opts in and the router
+	// is configured for replicas > 1, fire concurrent calls and
+	// return whichever stream opens first. Retry / fallback are
+	// skipped — the operator chose the N× cost trade.
+	if ov := FromContext(ctx); ov.Hedge && r.hedgeReplicas > 1 {
+		if stream, err := r.chatHedged(ctx, req, r.hedgeReplicas); stream != nil || err != nil {
+			return stream, err
+		}
+		// fall through to the normal path when hedging found no
+		// eligible workers.
+	}
 	ctx, span := tracer.Start(ctx, "router.Chat",
 		trace.WithAttributes(
 			attribute.String("flock.model.requested", req.Model),
@@ -894,6 +935,160 @@ func (r *Router) Chat(ctx context.Context, req engines.ChatRequest) (<-chan engi
 	}
 	span.End()
 	return nil, primaryErr
+}
+
+// chatHedged fires the request to up to `replicas` least-loaded
+// workers concurrently. The first goroutine whose eng.Chat returns
+// without error wins; the losers' contexts are cancelled and their
+// inflight counters are decremented.
+//
+// Returns (nil, nil) when hedging found no eligible workers — the
+// caller should fall back to the normal pick path. Returns
+// (nil, err) when every replica failed synchronously; the caller
+// surfaces the err.
+//
+// Limitations:
+//   - Hedging skips the catalog fallback chain, retries, latency
+//     reorder, and typed fallback. The operator already accepted the
+//     N× cost.
+//   - Local-only deployments fall back to a single local call.
+func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replicas int) (<-chan engines.StreamEvent, error) {
+	ctx, span := tracer.Start(ctx, "router.Chat.hedged",
+		trace.WithAttributes(
+			attribute.String("flock.model.requested", req.Model),
+			attribute.Int("flock.hedge.replicas", replicas),
+		),
+	)
+	candidates := r.hedgePickWorkers(ctx, req.Model, replicas)
+	if len(candidates) < 2 {
+		span.SetAttributes(attribute.Int("flock.hedge.candidates", len(candidates)))
+		span.End()
+		return nil, nil // fall through
+	}
+	span.SetAttributes(attribute.Int("flock.hedge.candidates", len(candidates)))
+
+	type result struct {
+		stream <-chan engines.StreamEvent
+		cancel context.CancelFunc
+		nodeID string
+		err    error
+	}
+	resultCh := make(chan result, len(candidates))
+	for _, w := range candidates {
+		w := w
+		go func() {
+			thisCtx, thisCancel := context.WithCancel(ctx)
+			r.incInflight(w.nodeID)
+			s, err := w.engine.Chat(thisCtx, req)
+			if err != nil {
+				thisCancel()
+				r.decInflight(w.nodeID)
+			}
+			resultCh <- result{stream: s, cancel: thisCancel, nodeID: w.nodeID, err: err}
+		}()
+	}
+
+	var winner result
+	var firstErr error
+	for i := 0; i < len(candidates); i++ {
+		res := <-resultCh
+		if res.err != nil {
+			if firstErr == nil {
+				firstErr = res.err
+			}
+			metrics.ObserveRouterHedge("error")
+			continue
+		}
+		if winner.stream == nil {
+			winner = res
+			metrics.ObserveRouterHedge("win")
+			continue
+		}
+		// Late arrival — cancel + drain.
+		res.cancel()
+		r.decInflight(res.nodeID)
+		metrics.ObserveRouterHedge("cancelled")
+		go drainWithTimeout(res.stream, 30*time.Second)
+	}
+	if winner.stream == nil {
+		span.SetStatus(codes.Error, "all hedge replicas failed")
+		span.End()
+		return nil, firstErr
+	}
+	span.SetAttributes(attribute.String("flock.hedge.winner", winner.nodeID))
+	span.SetStatus(codes.Ok, "hedge winner")
+	// Defer winner's cleanup to a goroutine that watches the stream
+	// close. (The winning attempt's incInflight stays in effect until
+	// the stream drains.)
+	out := make(chan engines.StreamEvent, 16)
+	go func() {
+		defer winner.cancel()
+		defer r.decInflight(winner.nodeID)
+		defer close(out)
+		defer span.End()
+		for ev := range winner.stream {
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				go drainWithTimeout(winner.stream, 30*time.Second)
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// hedgeCandidate is a small carrier struct so the hedged path doesn't
+// have to round-trip nodeIDs through the picker.
+type hedgeCandidate struct {
+	engine engines.Engine
+	nodeID string
+}
+
+// hedgePickWorkers returns up to `n` least-loaded workers that host
+// the model, skipping cooldowns + stale heartbeats. Returns the
+// chosen candidates in arbitrary order.
+func (r *Router) hedgePickWorkers(ctx context.Context, model string, n int) []hedgeCandidate {
+	if model == "" || r.store == nil {
+		return nil
+	}
+	placements, err := r.store.Placements().GetByModel(ctx, model)
+	if err != nil || len(placements) == 0 {
+		return nil
+	}
+	r.mu.RLock()
+	sort.Slice(placements, func(i, j int) bool {
+		return r.inflight[placements[i].NodeID] < r.inflight[placements[j].NodeID]
+	})
+	r.mu.RUnlock()
+
+	out := make([]hedgeCandidate, 0, n)
+	for _, p := range placements {
+		if len(out) >= n {
+			break
+		}
+		if p.NodeID == r.localNode {
+			// Add local as one of the candidates.
+			out = append(out, hedgeCandidate{engine: r.local, nodeID: p.NodeID})
+			continue
+		}
+		node, err := r.store.Nodes().Get(ctx, p.NodeID)
+		if err != nil || node == nil || node.Address == "" {
+			continue
+		}
+		if r.heartbeatMaxAge > 0 && !node.LastHeartbeat.IsZero() &&
+			time.Since(node.LastHeartbeat) > r.heartbeatMaxAge {
+			continue
+		}
+		if r.inCooldown(node.ID) {
+			continue
+		}
+		out = append(out, hedgeCandidate{
+			engine: r.getOrCreateRemote(node.ID, node.Address, node.WorkerToken),
+			nodeID: node.ID,
+		})
+	}
+	return out
 }
 
 // drainWithTimeout consumes a stream channel for at most `d`, then

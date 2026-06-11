@@ -85,6 +85,10 @@ type flockExtras struct {
 	Fallbacks      []string `json:"fallbacks,omitempty"`
 	NumRetries     int      `json:"num_retries,omitempty"`
 	RetryBackoffMS int      `json:"retry_backoff_ms,omitempty"`
+	Hedge          bool     `json:"hedge,omitempty"`
+	Cache          *struct {
+		Namespace string `json:"namespace,omitempty"`
+	} `json:"cache,omitempty"`
 }
 
 type chatMessage struct {

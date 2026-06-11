@@ -29,6 +29,14 @@ type Overrides struct {
 	// RetryBackoffCapMS. 0 means "retry immediately" — usually you
 	// want at least 100ms.
 	RetryBackoffMS int
+
+	// Hedge, when true, asks the router to fire the request to the
+	// top-N least-loaded workers concurrently and return whichever
+	// responds first. The N value comes from the router's
+	// SetHedgeReplicas config; per-request override is a yes/no
+	// toggle, not a count. Hedging skips the retry/fallback path —
+	// the operator has already paid the N× cost.
+	Hedge bool
 }
 
 // MaxRetries is the upper bound the parsers enforce on
@@ -44,7 +52,7 @@ const RetryBackoffCapMS = 5000
 // reflecting and lets callers short-circuit the override path entirely
 // for the (vast) majority of requests that don't customize routing.
 func (o Overrides) IsSet() bool {
-	return len(o.Fallbacks) > 0 || o.NumRetries > 0
+	return len(o.Fallbacks) > 0 || o.NumRetries > 0 || o.Hedge
 }
 
 // ctxKey is unexported to avoid context-key collisions.

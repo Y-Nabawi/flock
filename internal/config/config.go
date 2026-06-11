@@ -77,6 +77,13 @@ type RouterConfig struct {
 	// FLOCK_PLACEMENT_COOLDOWN_SECONDS.
 	PlacementAllowedFails    int `yaml:"placement_allowed_fails"`
 	PlacementCooldownSeconds int `yaml:"placement_cooldown_seconds"`
+
+	// HedgeReplicas, when > 1, enables request hedging — the router
+	// can fire a single request to N least-loaded workers
+	// concurrently and return whichever responds first. Each request
+	// opts in individually via `flock.hedge: true` body field or
+	// `X-Flock-Hedge: 1` header. Cap is router.MaxHedgeReplicas.
+	HedgeReplicas int `yaml:"hedge_replicas"`
 }
 
 type FallbackConfig struct {
