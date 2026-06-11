@@ -91,19 +91,60 @@ type HardwareSpec struct {
 }
 
 // LoadCatalog reads every *.yaml file in dir (non-recursive) and returns parsed entries.
-// If dir is empty, the built-in resolution order is attempted:
+// If dir is empty, the built-in resolution order is walked and **all**
+// directories that exist are merged. Later directories override earlier
+// ones on ID collision — so a user-supplied entry in
+// `~/.flock/catalog/` wins over the binary's bundled
+// `./catalog/<same-id>.yaml`. The precedence makes "edit-locally to
+// override" actually work; before the merge change the user's drop-in
+// was silently shadowed.
 //
-//  1. $FLOCK_CATALOG_DIR
+// Merge precedence (last writer wins):
+//
+//  1. $FLOCK_CATALOG_DIR        (least authoritative)
 //  2. ./catalog (relative to cwd)
 //  3. <exe-dir>/catalog
 //  4. /usr/local/share/flock/catalog
+//  5. /usr/share/flock/catalog
+//  6. ~/.flock/catalog          (most authoritative — user overrides)
+//
+// An explicit non-empty dir argument skips the merge and reads only
+// that directory (used by tests and callers that know exactly what they
+// want).
 func LoadCatalog(dir string) ([]Entry, error) {
-	if dir == "" {
-		dir = resolveCatalogDir()
+	if dir != "" {
+		return readCatalogDir(dir)
 	}
-	if dir == "" {
+	dirs := resolveCatalogDirs()
+	if len(dirs) == 0 {
 		return nil, fmt.Errorf("no catalog directory found")
 	}
+	// Merge into a map keyed by ID; later directories overwrite earlier
+	// ones. We do not warn the user about a shadowed entry — there's no
+	// good way to surface it without spamming startup logs. The
+	// dashboard's Catalog browser shows the *effective* entry, which is
+	// what matters operationally.
+	merged := map[string]Entry{}
+	for _, d := range dirs {
+		got, err := readCatalogDir(d)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range got {
+			merged[e.ID] = e
+		}
+	}
+	out := make([]Entry, 0, len(merged))
+	for _, e := range merged {
+		out = append(out, e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SizeBytes < out[j].SizeBytes })
+	return out, nil
+}
+
+// readCatalogDir reads a single directory's worth of YAML files into
+// Entry values. Used both by the explicit-dir path and by the merge.
+func readCatalogDir(dir string) ([]Entry, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read catalog %s: %w", dir, err)
@@ -129,7 +170,6 @@ func LoadCatalog(dir string) ([]Entry, error) {
 		}
 		out = append(out, e)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].SizeBytes < out[j].SizeBytes })
 	return out, nil
 }
 
@@ -200,27 +240,40 @@ func ParseSchemeID(id string) (*Entry, bool) {
 	return nil, false
 }
 
-func resolveCatalogDir() string {
-	if d := os.Getenv("FLOCK_CATALOG_DIR"); d != "" {
-		if _, err := os.Stat(d); err == nil {
-			return d
+// resolveCatalogDirs returns every catalog directory that exists, in
+// merge order: least-authoritative first, most-authoritative last. The
+// home-config dir (`~/.flock/catalog`) is placed last so user-edited
+// entries override the binary's bundled catalog on ID collision.
+//
+// Earlier this returned a single directory and stopped at the first
+// match, which silently shadowed a user's drop-in YAML when the same
+// id existed in `./catalog/`. The merge fixes that.
+func resolveCatalogDirs() []string {
+	var out []string
+	add := func(d string) {
+		if d == "" {
+			return
+		}
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			// Avoid adding the same directory twice if the user points
+			// FLOCK_CATALOG_DIR at one of the other candidates.
+			for _, x := range out {
+				if x == d {
+					return
+				}
+			}
+			out = append(out, d)
 		}
 	}
-	candidates := []string{"catalog"}
+	add(os.Getenv("FLOCK_CATALOG_DIR"))
+	add("catalog")
 	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "catalog"))
+		add(filepath.Join(filepath.Dir(exe), "catalog"))
 	}
+	add("/usr/local/share/flock/catalog")
+	add("/usr/share/flock/catalog")
 	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, ".flock", "catalog"))
+		add(filepath.Join(home, ".flock", "catalog"))
 	}
-	candidates = append(candidates,
-		"/usr/local/share/flock/catalog",
-		"/usr/share/flock/catalog",
-	)
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && st.IsDir() {
-			return c
-		}
-	}
-	return ""
+	return out
 }
