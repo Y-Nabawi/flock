@@ -42,6 +42,8 @@ The parser is `internal/models/catalog.go`. Anything not in this schema is silen
 | `fallback` | []string | **Generic** ordered fallback list — tried when the router can't classify the primary's failure into a more specific category (engine down, model not loaded, 503, timeout). Tried in order; the first that succeeds wins. Transparent to the client — the response carries the requested model name. Operators see hits in the audit log + stderr. |
 | `fallback_on_context_length` | []string | Typed fallback — replaces `fallback` when the primary rejects with a context-length-exceeded error. Typically points at long-context variants. Empty falls through to `fallback`. |
 | `fallback_on_content_policy` | []string | Typed fallback — replaces `fallback` when the upstream (typically a vendor) refuses on content-policy grounds. Typically points at a permissively-aligned open-weight model. Empty falls through to `fallback`. |
+| `price_prompt_usd_per_1k` | float | Optional per-1k-token USD rate for prompt tokens. 0 = no cost tracking (the right default for open-weight models on your own hardware). Operators set this to internally charge departments for compute. Surfaced in `flock model info`. |
+| `price_completion_usd_per_1k` | float | Optional per-1k-token USD rate for completion tokens. Same semantics as the prompt rate. Both rates are snapshotted into each `usage` row at write time, so historical totals stay correct after a rate change. |
 
 ### Source
 

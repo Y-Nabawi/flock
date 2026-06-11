@@ -61,6 +61,16 @@ type Entry struct {
 	// policy grounds. Typically points at an open-weight or
 	// permissively-aligned model. Empty falls back to `Fallback`.
 	FallbackOnContentPolicy []string `yaml:"fallback_on_content_policy,omitempty" json:"fallback_on_content_policy,omitempty"`
+
+	// PricePromptUSDPer1K and PriceCompletionUSDPer1K are the pricing
+	// rates per 1k tokens. 0 (default) means "free / no cost tracking" —
+	// the right answer for open-weight models running on the operator's
+	// hardware. Non-zero values are typically used by vendor proxies
+	// (Claude, GPT, etc., but the vendor table in `vendor_pricing.go`
+	// covers those automatically) or by operators who want to internally
+	// charge departments for compute time.
+	PricePromptUSDPer1K     float64 `yaml:"price_prompt_usd_per_1k,omitempty" json:"price_prompt_usd_per_1k,omitempty"`
+	PriceCompletionUSDPer1K float64 `yaml:"price_completion_usd_per_1k,omitempty" json:"price_completion_usd_per_1k,omitempty"`
 }
 
 // SourceSpec describes where to fetch model weights from.

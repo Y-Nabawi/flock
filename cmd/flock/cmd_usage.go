@@ -131,13 +131,16 @@ func renderUsageSummary(body []byte) {
 	var s struct {
 		Total       int     `json:"total"`
 		TokensTotal int64   `json:"tokens_total"`
+		CostTotal   float64 `json:"cost_usd_total"`
+		CostToday   float64 `json:"cost_usd_today"`
 		ErrorRate   float64 `json:"error_rate"`
 		P50MS       int     `json:"p50_ms"`
 		P95MS       int     `json:"p95_ms"`
 		P99MS       int     `json:"p99_ms"`
 		TopModels   []struct {
-			Model string `json:"model"`
-			Count int    `json:"count"`
+			Model   string  `json:"model"`
+			Count   int     `json:"count"`
+			CostUSD float64 `json:"cost_usd"`
 		} `json:"top_models"`
 		RPM60Min []int `json:"rpm_60min"`
 	}
@@ -152,6 +155,12 @@ func renderUsageSummary(body []byte) {
 	fmt.Printf("  %s  %d   %s  %s\n",
 		bold("Total requests"), s.Total,
 		bold("Tokens served"), fmt.Sprintf("%d", s.TokensTotal))
+	if s.CostTotal > 0 || s.CostToday > 0 {
+		fmt.Printf("  %s   %s today · %s in last 1000\n",
+			bold("$ spent"),
+			green(fmt.Sprintf("$%.4f", s.CostToday)),
+			dim(fmt.Sprintf("$%.4f", s.CostTotal)))
+	}
 	errColor := green
 	if s.ErrorRate > 0.05 {
 		errColor = red
@@ -166,7 +175,11 @@ func renderUsageSummary(body []byte) {
 	if len(s.TopModels) > 0 {
 		fmt.Printf("  %s\n", bold("Top models"))
 		for _, m := range s.TopModels {
-			fmt.Printf("    %s  %s\n", padCyan(m.Model, 24), dim(fmt.Sprintf("%d requests", m.Count)))
+			costStr := ""
+			if m.CostUSD > 0 {
+				costStr = " · " + dim(fmt.Sprintf("$%.4f", m.CostUSD))
+			}
+			fmt.Printf("    %s  %s%s\n", padCyan(m.Model, 24), dim(fmt.Sprintf("%d requests", m.Count)), costStr)
 		}
 	}
 	if len(s.RPM60Min) == 60 {
@@ -254,19 +267,21 @@ func usageBreakdown(cfg *config.Config, by, bucket, since, until string, limit i
 	}
 	var resp struct {
 		Rows []struct {
-			Bucket           string `json:"bucket"`
-			User             string `json:"user,omitempty"`
-			Model            string `json:"model,omitempty"`
-			Protocol         string `json:"protocol,omitempty"`
-			Outcome          string `json:"outcome,omitempty"`
-			PromptTokens     int64  `json:"prompt_tokens"`
-			CompletionTokens int64  `json:"completion_tokens"`
-			Requests         int64  `json:"requests"`
+			Bucket           string  `json:"bucket"`
+			User             string  `json:"user,omitempty"`
+			Model            string  `json:"model,omitempty"`
+			Protocol         string  `json:"protocol,omitempty"`
+			Outcome          string  `json:"outcome,omitempty"`
+			PromptTokens     int64   `json:"prompt_tokens"`
+			CompletionTokens int64   `json:"completion_tokens"`
+			Requests         int64   `json:"requests"`
+			CostUSD          float64 `json:"cost_usd"`
 		} `json:"rows"`
 		Totals struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-			Requests         int64 `json:"requests"`
+			PromptTokens     int64   `json:"prompt_tokens"`
+			CompletionTokens int64   `json:"completion_tokens"`
+			Requests         int64   `json:"requests"`
+			CostUSD          float64 `json:"cost_usd"`
 		} `json:"totals"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -277,6 +292,9 @@ func usageBreakdown(cfg *config.Config, by, bucket, since, until string, limit i
 		return
 	}
 	groups := strings.Split(by, ",")
+	// Only render the $ column when the totals are non-zero — keeps
+	// open-weight setups from showing a sea of $0.0000.
+	showCost := resp.Totals.CostUSD > 0
 	header := []string{bold(fmt.Sprintf("%-19s", "BUCKET"))}
 	for _, g := range groups {
 		header = append(header, bold(fmt.Sprintf("%-22s", strings.ToUpper(strings.TrimSpace(g)))))
@@ -285,6 +303,9 @@ func usageBreakdown(cfg *config.Config, by, bucket, since, until string, limit i
 		bold(fmt.Sprintf("%10s", "PROMPT")),
 		bold(fmt.Sprintf("%10s", "COMPL")),
 		bold(fmt.Sprintf("%10s", "REQS")))
+	if showCost {
+		header = append(header, bold(fmt.Sprintf("%10s", "$")))
+	}
 	fmt.Println(strings.Join(header, " "))
 	for _, r := range resp.Rows {
 		cols := []string{padDim(r.Bucket, 19)}
@@ -304,9 +325,16 @@ func usageBreakdown(cfg *config.Config, by, bucket, since, until string, limit i
 			fmt.Sprintf("%10d", r.PromptTokens),
 			fmt.Sprintf("%10d", r.CompletionTokens),
 			fmt.Sprintf("%10d", r.Requests))
+		if showCost {
+			cols = append(cols, fmt.Sprintf("%10s", fmt.Sprintf("$%.4f", r.CostUSD)))
+		}
 		fmt.Println(strings.Join(cols, " "))
 	}
 	fmt.Println()
-	fmt.Printf("%s  prompt=%d  completion=%d  requests=%d\n",
-		bold("Totals"), resp.Totals.PromptTokens, resp.Totals.CompletionTokens, resp.Totals.Requests)
+	costStr := ""
+	if showCost {
+		costStr = fmt.Sprintf("  cost=$%.4f", resp.Totals.CostUSD)
+	}
+	fmt.Printf("%s  prompt=%d  completion=%d  requests=%d%s\n",
+		bold("Totals"), resp.Totals.PromptTokens, resp.Totals.CompletionTokens, resp.Totals.Requests, costStr)
 }

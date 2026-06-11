@@ -164,6 +164,13 @@ type ShardStore interface {
 }
 
 // Usage records a single completed inference request.
+//
+// CostUSD is the dollar cost computed from the catalog/vendor pricing
+// table at write time (`recordUsage`). 0 means no cost was tracked —
+// either the row predates the column, or the model has no pricing
+// configured (typical for operator-owned open-weight models). Storing
+// the snapshot lets historical totals stay correct even when pricing
+// changes later.
 type Usage struct {
 	ID               int64
 	TS               time.Time
@@ -175,6 +182,7 @@ type Usage struct {
 	CompletionTokens int
 	LatencyMS        int
 	Outcome          string
+	CostUSD          float64
 }
 
 type UsageStore interface {
@@ -207,23 +215,25 @@ type BreakdownOpts struct {
 
 // BreakdownRow is one aggregated row.
 type BreakdownRow struct {
-	Bucket           string `json:"bucket"`
-	User             string `json:"user,omitempty"`
-	Model            string `json:"model,omitempty"`
-	Protocol         string `json:"protocol,omitempty"`
-	Outcome          string `json:"outcome,omitempty"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	Requests         int64  `json:"requests"`
+	Bucket           string  `json:"bucket"`
+	User             string  `json:"user,omitempty"`
+	Model            string  `json:"model,omitempty"`
+	Protocol         string  `json:"protocol,omitempty"`
+	Outcome          string  `json:"outcome,omitempty"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Requests         int64   `json:"requests"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 // BreakdownTotals sums everything in the bucket range — useful for the
 // dashboard "totals" footer and as a sanity check that group_by didn't
 // double-count.
 type BreakdownTotals struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	Requests         int64 `json:"requests"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Requests         int64   `json:"requests"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 // AuditEntry records an action taken via the admin API or gateway.
@@ -343,7 +353,8 @@ CREATE TABLE IF NOT EXISTS usage (
     prompt_tokens     INTEGER NOT NULL,
     completion_tokens INTEGER NOT NULL,
     latency_ms        INTEGER NOT NULL,
-    outcome           TEXT NOT NULL
+    outcome           TEXT NOT NULL,
+    cost_usd          REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
@@ -388,6 +399,9 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// v0.8 — per-key RPM / TPM ceilings. 0 = unlimited.
 		{table: "api_keys", column: "rpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0`},
 		{table: "api_keys", column: "tpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN tpm_limit INTEGER NOT NULL DEFAULT 0`},
+		// v0.8 — per-call $ cost. 0 default — pre-migration rows have no
+		// cost recorded.
+		{table: "usage", column: "cost_usd", ddl: `ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
@@ -897,10 +911,10 @@ type sqliteUsage struct{ db *sql.DB }
 func (s *sqliteUsage) Record(ctx context.Context, u Usage) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage(ts, api_key_id, user_id, model, protocol,
-		    prompt_tokens, completion_tokens, latency_ms, outcome)
-		 VALUES(?,?,?,?,?,?,?,?,?)`,
+		    prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		u.TS.Unix(), u.APIKeyID, u.UserID, u.Model, u.Protocol,
-		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome)
+		u.PromptTokens, u.CompletionTokens, u.LatencyMS, u.Outcome, u.CostUSD)
 	return err
 }
 
@@ -919,7 +933,7 @@ func (s *sqliteUsage) SumTokensSince(ctx context.Context, apiKeyID string, since
 func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome
+		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd
 		 FROM usage ORDER BY ts DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -931,7 +945,7 @@ func (s *sqliteUsage) Recent(ctx context.Context, limit int) ([]Usage, error) {
 func (s *sqliteUsage) RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, ts, api_key_id, user_id, model, protocol,
-		        prompt_tokens, completion_tokens, latency_ms, outcome
+		        prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd
 		 FROM usage WHERE user_id = ? ORDER BY ts DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -996,13 +1010,14 @@ func (s *sqliteUsage) Breakdown(ctx context.Context, opts BreakdownOpts) ([]Brea
 	}
 	bucket := bucketExpr(opts.Bucket)
 
-	// SELECT list: bucket label, each group col, then the three aggregates.
+	// SELECT list: bucket label, each group col, then the aggregates.
 	selectList := []string{bucket + " AS bucket"}
 	selectList = append(selectList, groupCols...)
 	selectList = append(selectList,
 		"SUM(prompt_tokens) AS pt",
 		"SUM(completion_tokens) AS ct",
 		"COUNT(*) AS reqs",
+		"COALESCE(SUM(cost_usd), 0) AS cost",
 	)
 	groupList := append([]string{"bucket"}, groupCols...)
 
@@ -1031,7 +1046,7 @@ func (s *sqliteUsage) Breakdown(ctx context.Context, opts BreakdownOpts) ([]Brea
 		for i := range opts.GroupBy {
 			dest = append(dest, &groupVals[i])
 		}
-		dest = append(dest, &r.PromptTokens, &r.CompletionTokens, &r.Requests)
+		dest = append(dest, &r.PromptTokens, &r.CompletionTokens, &r.Requests, &r.CostUSD)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, BreakdownTotals{}, fmt.Errorf("scan breakdown: %w", err)
 		}
@@ -1050,6 +1065,7 @@ func (s *sqliteUsage) Breakdown(ctx context.Context, opts BreakdownOpts) ([]Brea
 		totals.PromptTokens += r.PromptTokens
 		totals.CompletionTokens += r.CompletionTokens
 		totals.Requests += r.Requests
+		totals.CostUSD += r.CostUSD
 		out = append(out, r)
 	}
 	return out, totals, rows.Err()
@@ -1061,7 +1077,7 @@ func scanUsage(rows *sql.Rows) ([]Usage, error) {
 		var u Usage
 		var ts int64
 		if err := rows.Scan(&u.ID, &ts, &u.APIKeyID, &u.UserID, &u.Model, &u.Protocol,
-			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome); err != nil {
+			&u.PromptTokens, &u.CompletionTokens, &u.LatencyMS, &u.Outcome, &u.CostUSD); err != nil {
 			return nil, err
 		}
 		u.TS = time.Unix(ts, 0)

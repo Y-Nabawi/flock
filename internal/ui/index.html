@@ -610,11 +610,18 @@ async function renderDashboard() {
     }).join("");
 
     root.innerHTML = `
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
         ${card("Nodes", (nodes || []).length)}
         ${card("Models", (models || []).length)}
         ${card("Requests", summary.total || 0, "last 1000")}
         ${card("Tokens served", (summary.tokens_total || 0).toLocaleString(), "last 1000 requests")}
+        ${card("$ today",
+          summary.cost_usd_today > 0
+            ? "$" + summary.cost_usd_today.toFixed(2)
+            : "$0",
+          summary.cost_usd_total > 0
+            ? "$" + summary.cost_usd_total.toFixed(2) + " in last 1000"
+            : "open-weight only")}
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2080,8 +2087,13 @@ async function loadBreakdown() {
       return;
     }
     const groups = groupBy.split(",");
+    const t = resp.totals || {};
+    // Show the $ column only when there's actual cost data — keeps
+    // open-weight-only setups from rendering a column of "$0.00".
+    const showCost = (t.cost_usd || 0) > 0;
     const headers = ["Bucket"].concat(groups.map((g) => g.toUpperCase()))
-      .concat(["Prompt", "Completion", "Requests"]);
+      .concat(["Prompt", "Completion", "Requests"])
+      .concat(showCost ? ["$"] : []);
     const tableRows = rows.map((r) => {
       const cells = [r.bucket].concat(groups.map((g) => r[g] || ""))
         .concat([
@@ -2089,14 +2101,16 @@ async function loadBreakdown() {
           (r.completion_tokens || 0).toLocaleString(),
           (r.requests || 0).toLocaleString(),
         ]);
+      if (showCost) cells.push("$" + (r.cost_usd || 0).toFixed(4));
       return cells;
     });
-    const t = resp.totals || {};
     host.innerHTML = table(headers, tableRows) +
       `<div class="mt-2 text-xs text-slate-600">
          Totals — prompt: ${(t.prompt_tokens || 0).toLocaleString()},
          completion: ${(t.completion_tokens || 0).toLocaleString()},
-         requests: ${(t.requests || 0).toLocaleString()}
+         requests: ${(t.requests || 0).toLocaleString()}${
+           showCost ? `, cost: $${(t.cost_usd || 0).toFixed(4)}` : ""
+         }
        </div>`;
   } catch (e) {
     host.innerHTML = `<div class="text-xs text-red-600">${e.message}</div>`;

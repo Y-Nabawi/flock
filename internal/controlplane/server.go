@@ -130,6 +130,10 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	}
 	buckets := api.NewBucketStore()
 	api.SetBucketStore(buckets)
+	// Wire the catalog into the per-request cost computation path. The
+	// recordUsage step does a price lookup against this catalog +
+	// vendor pricing table to populate usage.cost_usd.
+	api.SetCatalog(cat)
 	return &Server{
 		cfg:         cfg,
 		store:       st,
@@ -1280,12 +1284,15 @@ func (s *Server) usageSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type modelStat struct {
-		Model string `json:"model"`
-		Count int    `json:"count"`
+		Model   string  `json:"model"`
+		Count   int     `json:"count"`
+		CostUSD float64 `json:"cost_usd"`
 	}
 	out := struct {
 		Total       int         `json:"total"`
 		TokensTotal int64       `json:"tokens_total"`
+		CostUSD     float64     `json:"cost_usd_total"`
+		CostToday   float64     `json:"cost_usd_today"`
 		ErrorRate   float64     `json:"error_rate"`
 		P50MS       int         `json:"p50_ms"`
 		P95MS       int         `json:"p95_ms"`
@@ -1306,11 +1313,18 @@ func (s *Server) usageSummary(w http.ResponseWriter, r *http.Request) {
 
 	latencies := make([]int, 0, len(us))
 	modelCounts := map[string]int{}
+	modelCost := map[string]float64{}
 	var errCount int
 	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	for _, u := range us {
 		out.TokensTotal += int64(u.PromptTokens) + int64(u.CompletionTokens)
+		out.CostUSD += u.CostUSD
+		if !u.TS.Before(todayStart) {
+			out.CostToday += u.CostUSD
+		}
 		modelCounts[u.Model]++
+		modelCost[u.Model] += u.CostUSD
 		latencies = append(latencies, u.LatencyMS)
 		switch strings.ToLower(u.Outcome) {
 		case "error", "failed", "timeout", "cancelled":
@@ -1337,7 +1351,7 @@ func (s *Server) usageSummary(w http.ResponseWriter, r *http.Request) {
 	out.ErrorRate = float64(errCount) / float64(len(us))
 
 	for m, c := range modelCounts {
-		out.TopModels = append(out.TopModels, modelStat{Model: m, Count: c})
+		out.TopModels = append(out.TopModels, modelStat{Model: m, Count: c, CostUSD: modelCost[m]})
 	}
 	sort.Slice(out.TopModels, func(i, j int) bool { return out.TopModels[i].Count > out.TopModels[j].Count })
 	if len(out.TopModels) > 5 {

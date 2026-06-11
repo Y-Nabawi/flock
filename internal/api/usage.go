@@ -4,13 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/metrics"
+	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
 )
+
+// catalogMu protects globalCatalog. Cost lookups happen per-request
+// from concurrent handlers; the catalog only changes on
+// SetCatalog (called once from the server constructor today, but the
+// mutex leaves room for a future hot-reload).
+var (
+	catalogMu     sync.RWMutex
+	globalCatalog []models.Entry
+)
+
+// SetCatalog wires the loaded catalog into the recordUsage path so it
+// can compute per-call dollar cost via models.CostOf. Safe to call
+// multiple times (e.g. on catalog reload) — the swap is atomic.
+func SetCatalog(cat []models.Entry) {
+	catalogMu.Lock()
+	globalCatalog = cat
+	catalogMu.Unlock()
+}
+
+func getCatalog() []models.Entry {
+	catalogMu.RLock()
+	defer catalogMu.RUnlock()
+	return globalCatalog
+}
 
 // rateLimitEstimateKey is unexported so other packages can't shadow the
 // estimate (which is meaningful only to the rate-limit reconciliation
@@ -77,6 +103,7 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	// Metrics first — always, regardless of auth state.
 	metrics.ObserveRequest(model, protocol, outcome, latency, prompt, completion)
 
+	cost := models.CostOf(model, getCatalog(), prompt, completion)
 	rec := store.Usage{
 		TS:               time.Now(),
 		APIKeyID:         keyID,
@@ -87,6 +114,7 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		CompletionTokens: completion,
 		LatencyMS:        int(latency.Milliseconds()),
 		Outcome:          outcome,
+		CostUSD:          cost,
 	}
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior
