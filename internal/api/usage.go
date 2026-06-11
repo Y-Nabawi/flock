@@ -10,6 +10,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/engines"
+	"github.com/hadihonarvar/flock/internal/guardrails"
 	"github.com/hadihonarvar/flock/internal/metrics"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
@@ -90,6 +91,15 @@ func SetCallbackDispatcher(d *callbacks.Dispatcher) { globalCallbackDispatcher =
 // Exposed so the audit middleware in the controlplane package can
 // publish "audit" events without re-importing the global.
 func CallbackDispatcher() *callbacks.Dispatcher { return globalCallbackDispatcher }
+
+// globalGuardrails is the per-process registry built from
+// config.Guardrails. nil = no guardrails configured; the hot path
+// short-circuits via Registry.IsEmpty().
+var globalGuardrails *guardrails.Registry
+
+// SetGuardrails wires the registry. Called from the controlplane at
+// startup.
+func SetGuardrails(r *guardrails.Registry) { globalGuardrails = r }
 
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already

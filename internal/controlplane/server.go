@@ -23,6 +23,7 @@ import (
 	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/callbacks"
 	"github.com/hadihonarvar/flock/internal/config"
+	"github.com/hadihonarvar/flock/internal/guardrails"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/events"
 	"github.com/hadihonarvar/flock/internal/models"
@@ -154,6 +155,8 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 	// sink runs in its own goroutine with a bounded queue.
 	dispatcher := buildCallbackDispatcher(cfg.Observability.Callbacks, log)
 	api.SetCallbackDispatcher(dispatcher)
+	// Guardrails (pre-call hooks). Synchronous on the request path.
+	api.SetGuardrails(buildGuardrailRegistry(cfg.Observability.Guardrails, log))
 	return &Server{
 		cfg:         cfg,
 		store:       st,
@@ -169,6 +172,65 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 		callbacks:   dispatcher,
 		bus:         events.New(),
 	}
+}
+
+// buildGuardrailRegistry constructs the three-mode guardrail
+// registry from the YAML rows. Unknown kinds or modes are ignored
+// (with a warn log) so a typo'd config doesn't crash startup.
+func buildGuardrailRegistry(rows []config.GuardrailConfig, log *slog.Logger) *guardrails.Registry {
+	if len(rows) == 0 {
+		return nil
+	}
+	reg := &guardrails.Registry{
+		Pre:         guardrails.NewChain(),
+		Post:        guardrails.NewChain(),
+		LoggingOnly: guardrails.NewChain(),
+	}
+	pre := []guardrails.Guardrail{}
+	post := []guardrails.Guardrail{}
+	log0 := []guardrails.Guardrail{}
+	for _, r := range rows {
+		mode := guardrails.Mode(r.Mode)
+		switch mode {
+		case guardrails.ModePre, guardrails.ModePost, guardrails.ModeLoggingOnly:
+		default:
+			log.Warn("guardrail with unknown mode — skipping", "name", r.Name, "mode", r.Mode)
+			continue
+		}
+		var g guardrails.Guardrail
+		switch r.Kind {
+		case "webhook":
+			if r.URL == "" {
+				log.Warn("guardrail webhook missing url — skipping", "name", r.Name)
+				continue
+			}
+			to := time.Duration(r.TimeoutSeconds) * time.Second
+			g = guardrails.NewWebhook(guardrails.WebhookConfig{
+				ID:       r.Name,
+				Mode:     mode,
+				URL:      r.URL,
+				AuthKey:  os.ExpandEnv(r.AuthKey),
+				Headers:  r.Headers,
+				FailOpen: r.FailOpen,
+				Timeout:  to,
+			})
+		default:
+			log.Warn("guardrail with unknown kind — skipping", "name", r.Name, "kind", r.Kind)
+			continue
+		}
+		switch mode {
+		case guardrails.ModePre:
+			pre = append(pre, g)
+		case guardrails.ModePost:
+			post = append(post, g)
+		case guardrails.ModeLoggingOnly:
+			log0 = append(log0, g)
+		}
+	}
+	reg.Pre = guardrails.NewChain(pre...)
+	reg.Post = guardrails.NewChain(post...)
+	reg.LoggingOnly = guardrails.NewChain(log0...)
+	return reg
 }
 
 // buildCallbackDispatcher constructs the observability fan-out from

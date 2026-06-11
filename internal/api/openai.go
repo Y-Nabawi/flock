@@ -149,8 +149,21 @@ type chatChunkChoice struct {
 // ChatCompletions handles POST /v1/chat/completions, both streaming and not.
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	// Read the body so pre-call guardrails can inspect (or rewrite)
+	// it before we decode. The hot-path short-circuits when no
+	// guardrails are configured.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
+		return
+	}
+	rewritten, ok := applyPreCallGuardrails(r.Context(), w, h.Store, body)
+	if !ok {
+		// Guardrail blocked the request; response already written.
+		return
+	}
 	var req chatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(rewritten, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid JSON body: "+err.Error())
 		return
 	}

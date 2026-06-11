@@ -127,6 +127,27 @@ type ObservabilityConfig struct {
 	// can't stall the gateway. Drops on overflow are counted via
 	// flock_callback_sent_total{outcome="dropped"}.
 	Callbacks []CallbackConfig `yaml:"callbacks"`
+
+	// Guardrails run synchronously on the request path. Each entry
+	// chooses a mode (pre | post | logging_only) and a driver (today:
+	// `webhook`). Pre guardrails can rewrite or block the request
+	// before the engine sees it; logging_only entries observe without
+	// intervening. Post mode is reserved for a follow-up — see the
+	// CHANGELOG for the streaming-response design limitation.
+	Guardrails []GuardrailConfig `yaml:"guardrails"`
+}
+
+// GuardrailConfig is one row from the observability.guardrails list.
+// Today only `kind: webhook` is implemented.
+type GuardrailConfig struct {
+	Name     string            `yaml:"name"`
+	Kind     string            `yaml:"kind"`      // webhook
+	Mode     string            `yaml:"mode"`      // pre | post | logging_only
+	URL      string            `yaml:"url"`       // webhook only
+	AuthKey  string            `yaml:"auth_key"`  // optional bearer (env-expanded)
+	Headers  map[string]string `yaml:"headers"`   // optional extra headers
+	FailOpen bool              `yaml:"fail_open"` // on error: true → Allow, false → Block
+	TimeoutSeconds int          `yaml:"timeout_seconds"`
 }
 
 // CallbackConfig is one row from the observability.callbacks list.

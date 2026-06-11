@@ -1,0 +1,105 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/guardrails"
+	"github.com/hadihonarvar/flock/internal/metrics"
+	"github.com/hadihonarvar/flock/internal/store"
+)
+
+// applyPreCallGuardrails walks the configured pre + logging_only
+// chains over the request body. Returns the (possibly-rewritten) body
+// and a bool: if false, the handler should stop — a `block` action
+// has already been written to the response.
+//
+// Order of evaluation: pre first (in declared order), then
+// logging_only. A `block` from any pre guardrail short-circuits the
+// chain; logging_only entries can't block. Each guardrail observes
+// the latest body (so a `rewrite` from guardrail #1 is what
+// guardrail #2 sees).
+func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
+	reg := globalGuardrails
+	if reg.IsEmpty() {
+		return body, true
+	}
+	current := body
+	// Pre chain — block / rewrite / allow.
+	if reg.Pre != nil {
+		for _, g := range reg.Pre.Guards() {
+			act, _ := g.Check(ctx, current)
+			metrics.ObserveGuardrail(g.Name(), act.Kind)
+			switch act.Kind {
+			case "block":
+				recordGuardrailAudit(ctx, st, g.Name(), "block", act.Reason)
+				writeGuardrailBlocked(w, g.Name(), act.Reason)
+				return nil, false
+			case "rewrite":
+				current = act.NewBody
+			case "flag":
+				recordGuardrailAudit(ctx, st, g.Name(), "flag", act.Reason)
+			}
+		}
+	}
+	// Logging-only — observe, never alter the body or block.
+	if reg.LoggingOnly != nil {
+		for _, g := range reg.LoggingOnly.Guards() {
+			act, _ := g.Check(ctx, current)
+			metrics.ObserveGuardrail(g.Name(), act.Kind)
+			if act.Kind == "flag" || act.Kind == "block" {
+				// `block` from a logging-only guardrail is downgraded
+				// to a flag in the audit log; the request still passes.
+				recordGuardrailAudit(ctx, st, g.Name(), "flag", act.Reason)
+			}
+		}
+	}
+	return current, true
+}
+
+func writeGuardrailBlocked(w http.ResponseWriter, name, reason string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	body := map[string]any{
+		"error": map[string]any{
+			"type":      "guardrail_blocked",
+			"message":   "request blocked by guardrail",
+			"guardrail": name,
+			"reason":    reason,
+		},
+	}
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func recordGuardrailAudit(ctx context.Context, st store.Store, name, action, reason string) {
+	if st == nil {
+		return
+	}
+	actor := ""
+	if k := auth.KeyFrom(ctx); k != nil {
+		actor = k.UserID
+	}
+	meta := `{"reason":` + jsonQuote(reason) + `,"request_id":"` + RequestIDFrom(ctx) + `"}`
+	_ = st.Audit().Record(ctx, store.AuditEntry{
+		Actor:    actor,
+		Action:   "guardrail." + action,
+		Target:   name,
+		Metadata: meta,
+	})
+}
+
+// jsonQuote is a cheap escape for the audit metadata embed. Goes
+// through json.Marshal to get the right escaping for quotes /
+// newlines.
+func jsonQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
+}
+
+// ensure guardrails is imported when registry use compiles out.
+var _ = (*guardrails.Registry)(nil)
