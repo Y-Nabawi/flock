@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,11 +21,13 @@ func cmdToken(args []string) {
 			"flock token create alice-admin --admin              # admin-scope key (can call /admin/v1/*)",
 			"flock token create alice --models qwen-coder-7b     # restrict to one model",
 			"flock token create bob   --models 'claude-*,gpt-*'  # vendor families via glob",
+			"flock token create alice --rpm 60 --tpm 100000      # per-minute ceilings",
 			"flock token create --node                           # one-time join token for a new worker",
 			"flock token edit k_abc123 --add-model qwen3-14b     # extend the allowlist",
 			"flock token edit k_abc123 --remove-model gpt-4o     # tighten the allowlist",
 			"flock token edit k_abc123 --set-models a,b,c        # replace the allowlist",
 			"flock token edit k_abc123 --clear-models            # drop the allowlist (any model)",
+			"flock token edit k_abc123 --rpm 30 --tpm 50000      # set per-minute ceilings (0 = unlimited)",
 			"flock token ls",
 			"flock token revoke k_abc123",
 		},
@@ -32,6 +35,7 @@ func cmdToken(args []string) {
 			"⚠️  --node tokens are the shared secret leader ↔ worker — only issue on a trusted network (LAN or Tailscale).",
 			"`--models` accepts a comma-separated list. Entries support a `*` suffix wildcard (`claude-*`).",
 			"A key with no allowlist can call any model. An empty allowlist (`--set-models ''`) denies every model.",
+			"`--rpm` (requests/min) and `--tpm` (tokens/min) are in-memory leaky buckets; reset on leader restart. 0 = unlimited.",
 		},
 	}
 	if len(args) == 0 {
@@ -45,6 +49,7 @@ func cmdToken(args []string) {
 		name := "default"
 		scope := "user"
 		var models []string
+		rpm, tpm := 0, 0
 		for i := 1; i < len(args); i++ {
 			a := args[i]
 			switch a {
@@ -60,9 +65,27 @@ func cmdToken(args []string) {
 					models = parseModelList(args[i+1])
 					i++
 				}
+			case "--rpm":
+				if i+1 < len(args) {
+					rpm = parseIntFlag(args[i+1], "--rpm")
+					i++
+				}
+			case "--tpm":
+				if i+1 < len(args) {
+					tpm = parseIntFlag(args[i+1], "--tpm")
+					i++
+				}
 			default:
 				if strings.HasPrefix(a, "--models=") {
 					models = parseModelList(strings.TrimPrefix(a, "--models="))
+					continue
+				}
+				if strings.HasPrefix(a, "--rpm=") {
+					rpm = parseIntFlag(strings.TrimPrefix(a, "--rpm="), "--rpm")
+					continue
+				}
+				if strings.HasPrefix(a, "--tpm=") {
+					tpm = parseIntFlag(strings.TrimPrefix(a, "--tpm="), "--tpm")
 					continue
 				}
 				if name == "default" {
@@ -70,7 +93,7 @@ func cmdToken(args []string) {
 				}
 			}
 		}
-		tokenCreate(name, scope, models)
+		tokenCreate(name, scope, models, rpm, tpm)
 	case "edit":
 		if len(args) < 2 {
 			die("usage: flock token edit <id> --add-model X | --remove-model Y | --set-models a,b,c | --clear-models")
@@ -86,6 +109,17 @@ func cmdToken(args []string) {
 	default:
 		die("unknown subcommand: token %s", args[0])
 	}
+}
+
+// parseIntFlag parses a non-negative integer for a token-create flag.
+// Centralized so the error message stays consistent ("invalid --rpm",
+// not whatever strconv defaults to).
+func parseIntFlag(s, flag string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 {
+		die("invalid %s: %q (expected a non-negative integer)", flag, s)
+	}
+	return n
 }
 
 // parseModelList splits a comma-separated list, trims whitespace, and
@@ -109,7 +143,7 @@ func parseModelList(s string) []string {
 	return out
 }
 
-func tokenCreate(name, scope string, models []string) {
+func tokenCreate(name, scope string, models []string, rpm, tpm int) {
 	cfg := loadConfigOrExit()
 	st := openStoreOrExit(cfg)
 	defer st.Close()
@@ -124,6 +158,8 @@ func tokenCreate(name, scope string, models []string) {
 		die("generate: %v", err)
 	}
 	rec.AllowedModels = models
+	rec.RPMLimit = rpm
+	rec.TPMLimit = tpm
 	if err := st.APIKeys().Create(context.Background(), rec); err != nil {
 		die("persist key: %v", err)
 	}
@@ -131,9 +167,19 @@ func tokenCreate(name, scope string, models []string) {
 	if len(models) > 0 {
 		fmt.Printf("  allowed models: %s\n", strings.Join(models, ", "))
 	}
+	if rpm > 0 || tpm > 0 {
+		fmt.Printf("  rpm: %s · tpm: %s\n", limitStr(rpm), limitStr(tpm))
+	}
 	fmt.Println()
 	fmt.Println("  Key (shown once — store it now):")
 	fmt.Printf("    %s\n", plain)
+}
+
+func limitStr(n int) string {
+	if n <= 0 {
+		return "∞"
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // tokenEdit currently supports only allowlist edits — that's the one
@@ -157,6 +203,8 @@ func tokenEdit(id string, args []string) {
 	var setList []string
 	setExplicit := false
 	clearRestriction := false
+	rpm, tpm := key.RPMLimit, key.TPMLimit
+	rpmSet, tpmSet := false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
@@ -183,6 +231,20 @@ func tokenEdit(id string, args []string) {
 			i++
 		case "--clear-models":
 			clearRestriction = true
+		case "--rpm":
+			if i+1 >= len(args) {
+				die("--rpm requires a value (0 = unlimited)")
+			}
+			rpm = parseIntFlag(args[i+1], "--rpm")
+			rpmSet = true
+			i++
+		case "--tpm":
+			if i+1 >= len(args) {
+				die("--tpm requires a value (0 = unlimited)")
+			}
+			tpm = parseIntFlag(args[i+1], "--tpm")
+			tpmSet = true
+			i++
 		default:
 			if strings.HasPrefix(a, "--add-model=") {
 				current = appendUnique(current, strings.TrimPrefix(a, "--add-model="))
@@ -199,42 +261,60 @@ func tokenEdit(id string, args []string) {
 				setExplicit = true
 				continue
 			}
+			if strings.HasPrefix(a, "--rpm=") {
+				rpm = parseIntFlag(strings.TrimPrefix(a, "--rpm="), "--rpm")
+				rpmSet = true
+				continue
+			}
+			if strings.HasPrefix(a, "--tpm=") {
+				tpm = parseIntFlag(strings.TrimPrefix(a, "--tpm="), "--tpm")
+				tpmSet = true
+				continue
+			}
 			die("unknown flag: %s", a)
 		}
 	}
 
-	var newAllowed []string
-	switch {
-	case clearRestriction:
-		newAllowed = nil
-	case setExplicit:
-		if setList == nil {
-			// Explicit empty list → deny all.
-			newAllowed = []string{}
-		} else {
-			newAllowed = setList
-		}
-	case hadList:
-		// Apply add/remove deltas. An empty list is meaningful here:
-		// "you removed your only allowed model" → deny all.
-		newAllowed = current
-		if newAllowed == nil {
-			newAllowed = []string{}
-		}
-	default:
-		die("no edit flag given (try --add-model, --remove-model, --set-models, or --clear-models)")
+	allowlistChange := clearRestriction || setExplicit || hadList
+	rateChange := rpmSet || tpmSet
+	if !allowlistChange && !rateChange {
+		die("no edit flag given (try --add-model, --remove-model, --set-models, --clear-models, --rpm, --tpm)")
 	}
 
-	if err := st.APIKeys().UpdateAllowedModels(context.Background(), id, newAllowed); err != nil {
-		die("update allowed_models: %v", err)
+	if allowlistChange {
+		var newAllowed []string
+		switch {
+		case clearRestriction:
+			newAllowed = nil
+		case setExplicit:
+			if setList == nil {
+				newAllowed = []string{} // explicit empty = deny all
+			} else {
+				newAllowed = setList
+			}
+		case hadList:
+			newAllowed = current
+			if newAllowed == nil {
+				newAllowed = []string{}
+			}
+		}
+		if err := st.APIKeys().UpdateAllowedModels(context.Background(), id, newAllowed); err != nil {
+			die("update allowed_models: %v", err)
+		}
+		switch {
+		case newAllowed == nil:
+			ok(os.Stdout, "%s: allowlist cleared (any model allowed)", id)
+		case len(newAllowed) == 0:
+			ok(os.Stdout, "%s: allowlist now denies every model", id)
+		default:
+			ok(os.Stdout, "%s: allowed models = %s", id, strings.Join(newAllowed, ", "))
+		}
 	}
-	switch {
-	case newAllowed == nil:
-		ok(os.Stdout, "%s: allowlist cleared (any model allowed)", id)
-	case len(newAllowed) == 0:
-		ok(os.Stdout, "%s: allowlist now denies every model", id)
-	default:
-		ok(os.Stdout, "%s: allowed models = %s", id, strings.Join(newAllowed, ", "))
+	if rateChange {
+		if err := st.APIKeys().UpdateRateLimits(context.Background(), id, rpm, tpm); err != nil {
+			die("update rate limits: %v", err)
+		}
+		ok(os.Stdout, "%s: rpm = %s · tpm = %s", id, limitStr(rpm), limitStr(tpm))
 	}
 }
 
@@ -269,7 +349,7 @@ func tokenList() {
 		fmt.Println("(no API keys — create one with `flock token create`)")
 		return
 	}
-	fmt.Printf("%-14s %-20s %-8s %-7s %-30s %s\n", "ID", "NAME", "SCOPE", "REVOKED", "MODELS", "CREATED")
+	fmt.Printf("%-14s %-20s %-8s %-7s %-8s %-8s %-30s %s\n", "ID", "NAME", "SCOPE", "REVOKED", "RPM", "TPM", "MODELS", "CREATED")
 	for _, k := range keys {
 		rev := "no"
 		if k.Revoked {
@@ -287,7 +367,10 @@ func tokenList() {
 				models = models[:27] + "…"
 			}
 		}
-		fmt.Printf("%-14s %-20s %-8s %-7s %-30s %s\n", k.ID, k.Name, k.Scope, rev, models, k.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("%-14s %-20s %-8s %-7s %-8s %-8s %-30s %s\n",
+			k.ID, k.Name, k.Scope, rev,
+			limitStr(k.RPMLimit), limitStr(k.TPMLimit),
+			models, k.CreatedAt.Format(time.RFC3339))
 	}
 }
 

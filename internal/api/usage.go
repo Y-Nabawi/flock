@@ -12,6 +12,45 @@ import (
 	"github.com/hadihonarvar/flock/internal/store"
 )
 
+// rateLimitEstimateKey is unexported so other packages can't shadow the
+// estimate (which is meaningful only to the rate-limit reconciliation
+// path).
+type rateLimitEstimateKey struct{}
+
+// rateLimitEstimate is the upfront token count attached to a request
+// by RateLimitMiddleware. recordUsage reads it to reconcile against
+// the actual prompt+completion tokens once the response is done.
+type rateLimitEstimate struct {
+	KeyID    string
+	Estimate int
+}
+
+// WithRateLimitEstimate stashes the upfront estimate on ctx for the
+// downstream recordUsage reconciliation step. Exported so the
+// middleware (in the same package, but kept callable for tests too) can
+// build the context.
+func WithRateLimitEstimate(ctx context.Context, keyID string, estimate int) context.Context {
+	return context.WithValue(ctx, rateLimitEstimateKey{}, rateLimitEstimate{KeyID: keyID, Estimate: estimate})
+}
+
+// rateLimitEstimateFrom reads the stashed estimate. Returns the zero
+// value when no estimate was set — the reconciliation step is then a
+// no-op.
+func rateLimitEstimateFrom(ctx context.Context) rateLimitEstimate {
+	v, _ := ctx.Value(rateLimitEstimateKey{}).(rateLimitEstimate)
+	return v
+}
+
+// globalBucketStore holds the per-process bucket map so middleware
+// instances and the recordUsage reconciliation point share state.
+// nil until SetBucketStore is called from the server wiring.
+var globalBucketStore *BucketStore
+
+// SetBucketStore wires the per-process bucket store. Called from the
+// control plane at startup; recordUsage uses it to refund / deduct
+// based on actual completion tokens vs the upfront estimate.
+func SetBucketStore(s *BucketStore) { globalBucketStore = s }
+
 // recordUsage writes a usage row for a completed request and updates metrics.
 // Best-effort — failures are not surfaced to the caller (the request already
 // completed successfully from the user's perspective).
@@ -52,6 +91,23 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 	if err := st.Usage().Record(ctx, rec); err != nil {
 		// swallow — store outage should not affect user-visible behavior
 		_ = err
+	}
+
+	// Reconcile the rate-limit TPM bucket. The middleware deducted an
+	// upfront estimate; once the real usage is known we either refund
+	// (over-estimated) or deduct the delta (under-estimated). The
+	// bucket can go briefly negative — that's fine; subsequent
+	// requests refill and rate-limit normally.
+	if est := rateLimitEstimateFrom(ctx); est.KeyID != "" && globalBucketStore != nil {
+		actual := prompt + completion
+		if _, tpm := globalBucketStore.Get(est.KeyID); tpm != nil {
+			switch {
+			case actual > est.Estimate:
+				tpm.Refund(-float64(actual - est.Estimate))
+			case actual < est.Estimate:
+				tpm.Refund(float64(est.Estimate - actual))
+			}
+		}
 	}
 }
 

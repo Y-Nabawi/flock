@@ -1564,11 +1564,14 @@ async function renderTokens() {
       scopeBadge(k.scope),
       k.user_id || "<i class='text-slate-400'>—</i>",
       k.quota_daily_tokens > 0 ? k.quota_daily_tokens.toLocaleString() : "<i class='text-slate-400'>∞</i>",
+      renderRateLimit(k.rpm_limit, "rpm"),
+      renderRateLimit(k.tpm_limit, "tpm"),
       renderAllowedModels(k.allowed_models),
       k.revoked ? `<span class="pill pill-err">revoked</span>` : `<span class="pill pill-ok">active</span>`,
       new Date(k.created_at).toLocaleString(),
       k.revoked ? "" : `<div class="flex gap-2">
         <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${k.id}', ${JSON.stringify(k.allowed_models || []).replace(/"/g, '&quot;')}, ${k.allowed_models == null})">models…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenRates('${k.id}', ${k.rpm_limit || 0}, ${k.tpm_limit || 0})">rates…</button>
         <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>
       </div>`,
     ]);
@@ -1577,7 +1580,7 @@ async function renderTokens() {
         <h2 class="text-lg font-semibold">API keys</h2>
         <button onclick="openInviteModal()" class="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm font-medium">+ Invite teammate</button>
       </div>
-      ${table(["ID", "Name", "Scope", "User", "Daily quota", "Models", "Status", "Created", ""], rows)}
+      ${table(["ID", "Name", "Scope", "User", "Daily quota", "RPM", "TPM", "Models", "Status", "Created", ""], rows)}
 
       <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
         <strong>Heads-up:</strong> "node" scope tokens become the shared secret a worker uses for BOTH directions of communication. They are stored plaintext on <span class="code">nodes.worker_token</span> and used by the leader to call back into the worker. Only issue them on a trusted network (LAN or Tailscale). See the <a class="underline" href="#" onclick="switchView('settings')">Settings tab</a> for the full security model.
@@ -1604,6 +1607,16 @@ async function renderTokens() {
           </div>
           <button id="tokCreateBtn" onclick="createToken()" class="bg-slate-900 text-white py-1.5 rounded text-sm font-medium">Create</button>
         </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+          <div>
+            <label class="text-xs text-slate-500">RPM (requests/min, 0=∞)</label>
+            <input id="tokRPM" type="number" value="0" min="0" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-500">TPM (tokens/min, 0=∞)</label>
+            <input id="tokTPM" type="number" value="0" min="0" class="w-full border border-slate-300 rounded px-2 py-1 text-sm" />
+          </div>
+        </div>
         <div class="mt-3">
           <label class="text-xs text-slate-500">Allowed models <span class="text-slate-400">(optional — leave blank for any; supports `claude-*` glob)</span></label>
           <input id="tokAllowed" type="text" placeholder="qwen3-14b, claude-*, gpt-4o-mini" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
@@ -1612,6 +1625,39 @@ async function renderTokens() {
       </div>`;
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+// renderRateLimit renders an RPM/TPM cell — "∞" when unlimited,
+// otherwise the integer formatted with thousands separators.
+function renderRateLimit(n, kind) {
+  if (!n || n <= 0) return `<span class="text-xs text-slate-400">∞</span>`;
+  return `<span class="text-xs font-mono">${n.toLocaleString()}</span>`;
+}
+
+// editTokenRates opens a tiny inline editor for the RPM/TPM ceilings.
+// 0 = unlimited; non-negative integer; PATCH applies both atomically
+// so a partial response can't leave one bucket dangling.
+async function editTokenRates(id, currentRPM, currentTPM) {
+  const rpmStr = prompt(`Requests per minute for ${id} (0 = unlimited)`, String(currentRPM || 0));
+  if (rpmStr === null) return;
+  const tpmStr = prompt(`Tokens per minute for ${id} (0 = unlimited)`, String(currentTPM || 0));
+  if (tpmStr === null) return;
+  const rpm = parseInt(rpmStr, 10);
+  const tpm = parseInt(tpmStr, 10);
+  if (Number.isNaN(rpm) || rpm < 0 || Number.isNaN(tpm) || tpm < 0) {
+    toast("RPM/TPM must be non-negative integers", "err");
+    return;
+  }
+  try {
+    await api(`/admin/v1/tokens/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ rpm_limit: rpm, tpm_limit: tpm }),
+    });
+    toast(`Updated rate limits for ${id}`, "ok");
+    await renderTokens();
+  } catch (e) {
+    toast(`Update failed: ${e.message}`, "err");
   }
 }
 
@@ -1663,6 +1709,8 @@ async function createToken() {
   const name = $("#tokName").value.trim();
   const scope = $("#tokScope").value;
   const quota = parseInt($("#tokQuota").value, 10) || 0;
+  const rpm = parseInt($("#tokRPM")?.value, 10) || 0;
+  const tpm = parseInt($("#tokTPM")?.value, 10) || 0;
   if (!name) { alert("Name required."); return; }
   const allowedRaw = ($("#tokAllowed")?.value || "").trim();
   let allowed = null;
@@ -1673,7 +1721,13 @@ async function createToken() {
   try {
     const resp = await api("/admin/v1/tokens", {
       method: "POST",
-      body: JSON.stringify({ name, scope, quota_daily_tokens: quota, allowed_models: allowed }),
+      body: JSON.stringify({
+        name, scope,
+        quota_daily_tokens: quota,
+        rpm_limit: rpm,
+        tpm_limit: tpm,
+        allowed_models: allowed,
+      }),
     });
     showOneTimeModal(
       `Key created: ${resp.name} (${resp.scope})`,
@@ -1682,6 +1736,8 @@ async function createToken() {
     );
     $("#tokName").value = "";
     if ($("#tokAllowed")) $("#tokAllowed").value = "";
+    if ($("#tokRPM")) $("#tokRPM").value = "0";
+    if ($("#tokTPM")) $("#tokTPM").value = "0";
     await renderTokens();
   } catch (e) {
     const m = $("#tokMsg");

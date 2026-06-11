@@ -44,11 +44,12 @@ type Server struct {
 	log    *slog.Logger
 	http   *http.Server
 
-	router     *router.Router
-	orch       *scheduler.Orchestrator
-	openaiH    *api.Handler
-	anthropicH *api.AnthropicHandler
-	egressH    *api.EgressHandler
+	router      *router.Router
+	orch        *scheduler.Orchestrator
+	openaiH     *api.Handler
+	anthropicH  *api.AnthropicHandler
+	egressH     *api.EgressHandler
+	rateBuckets *api.BucketStore
 
 	// bus fans out dashboard refresh events. /admin/v1/events streams
 	// to subscribed dashboards; producers (addModel, deleteModel, etc.)
@@ -126,18 +127,21 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			VertexURL:      cfg.Router.Fallback.VertexURL,
 		},
 	}
+	buckets := api.NewBucketStore()
+	api.SetBucketStore(buckets)
 	return &Server{
-		cfg:        cfg,
-		store:      st,
-		engine:     eng,
-		cat:        cat,
-		log:        log,
-		router:     routed,
-		orch:       orch,
-		openaiH:    openaiH,
-		anthropicH: anthropicH,
-		egressH:    egressH,
-		bus:        events.New(),
+		cfg:         cfg,
+		store:       st,
+		engine:      eng,
+		cat:         cat,
+		log:         log,
+		router:      routed,
+		orch:        orch,
+		openaiH:     openaiH,
+		anthropicH:  anthropicH,
+		egressH:     egressH,
+		rateBuckets: buckets,
+		bus:         events.New(),
 	}
 }
 
@@ -236,6 +240,10 @@ func (s *Server) routes() http.Handler {
 		// to spend on an unauthorized model would otherwise burn a 429
 		// instead of the more accurate 403.
 		r.Use(api.ModelAllowMiddleware(s.store))
+		// RPM/TPM ceilings. Wired before the daily quota check so a
+		// runaway client gets the more-actionable 429 with Retry-After
+		// instead of the daily 429.
+		r.Use(api.RateLimitMiddleware(s.rateBuckets))
 		r.Use(api.QuotaMiddleware(s.store))
 		r.Get("/models", s.openaiH.ListModels)
 		r.Post("/chat/completions", s.dispatchOpenAIChat)
@@ -804,6 +812,8 @@ type tokenView struct {
 	Scope            string    `json:"scope"`
 	UserID           string    `json:"user_id"`
 	QuotaDailyTokens int64     `json:"quota_daily_tokens"`
+	RPMLimit         int       `json:"rpm_limit"`
+	TPMLimit         int       `json:"tpm_limit"`
 	AllowedModels    []string  `json:"allowed_models"`
 	Revoked          bool      `json:"revoked"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -820,6 +830,8 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		out = append(out, tokenView{
 			ID: k.ID, Name: k.Name, Scope: k.Scope, UserID: k.UserID,
 			QuotaDailyTokens: k.QuotaDailyTokens,
+			RPMLimit:         k.RPMLimit,
+			TPMLimit:         k.TPMLimit,
 			AllowedModels:    k.AllowedModels,
 			Revoked:          k.Revoked, CreatedAt: k.CreatedAt,
 		})
@@ -834,6 +846,8 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		Scope            string   `json:"scope"` // admin | user | node
 		UserID           string   `json:"user_id"`
 		QuotaDailyTokens int64    `json:"quota_daily_tokens"`
+		RPMLimit         int      `json:"rpm_limit"`
+		TPMLimit         int      `json:"tpm_limit"`
 		AllowedModels    []string `json:"allowed_models"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -861,6 +875,8 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec.QuotaDailyTokens = req.QuotaDailyTokens
+	rec.RPMLimit = req.RPMLimit
+	rec.TPMLimit = req.TPMLimit
 	rec.AllowedModels = req.AllowedModels
 	if err := s.store.APIKeys().Create(r.Context(), rec); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -870,6 +886,8 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		"id":             rec.ID,
 		"name":           rec.Name,
 		"scope":          rec.Scope,
+		"rpm_limit":      rec.RPMLimit,
+		"tpm_limit":      rec.TPMLimit,
 		"allowed_models": rec.AllowedModels,
 		"plaintext":      plain, // shown ONCE; caller must save it now
 		"created_at":     rec.CreatedAt,
@@ -887,39 +905,65 @@ func (s *Server) editToken(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "token id required")
 		return
 	}
-	// Use a json.RawMessage so we can tell "field absent" from
-	// "field present and null" — both round-trip to a nil slice in a
-	// plain `[]string` field.
+	// Use a json.RawMessage for allowed_models so we can tell
+	// "field absent" from "field present and null" — both round-trip
+	// to a nil slice in a plain `[]string` field. RPM/TPM use
+	// pointers (nil = field absent, *int = explicit set).
 	var req struct {
 		AllowedModels *json.RawMessage `json:"allowed_models"`
+		RPMLimit      *int             `json:"rpm_limit"`
+		TPMLimit      *int             `json:"tpm_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if req.AllowedModels == nil {
-		writeJSONError(w, http.StatusBadRequest, "no editable fields in body (try `allowed_models`)")
+	if req.AllowedModels == nil && req.RPMLimit == nil && req.TPMLimit == nil {
+		writeJSONError(w, http.StatusBadRequest, "no editable fields in body (try `allowed_models`, `rpm_limit`, `tpm_limit`)")
 		return
 	}
-	raw := string(*req.AllowedModels)
-	var allowed []string // nil = unrestricted
-	if raw != "null" {
-		if err := json.Unmarshal(*req.AllowedModels, &allowed); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "allowed_models must be a list or null")
+	resp := map[string]any{"id": id}
+	if req.AllowedModels != nil {
+		raw := string(*req.AllowedModels)
+		var allowed []string // nil = unrestricted
+		if raw != "null" {
+			if err := json.Unmarshal(*req.AllowedModels, &allowed); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "allowed_models must be a list or null")
+				return
+			}
+			if allowed == nil {
+				allowed = []string{} // empty list = deny all
+			}
+		}
+		if err := s.store.APIKeys().UpdateAllowedModels(r.Context(), id, allowed); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if allowed == nil {
-			allowed = []string{} // empty list = deny all
+		resp["allowed_models"] = allowed
+	}
+	if req.RPMLimit != nil || req.TPMLimit != nil {
+		// Fetch current values so a partial edit doesn't accidentally
+		// reset the field not being changed.
+		current, err := s.store.APIKeys().GetByID(r.Context(), id)
+		if err != nil || current == nil {
+			writeJSONError(w, http.StatusNotFound, "token not found")
+			return
 		}
+		rpm, tpm := current.RPMLimit, current.TPMLimit
+		if req.RPMLimit != nil {
+			rpm = *req.RPMLimit
+		}
+		if req.TPMLimit != nil {
+			tpm = *req.TPMLimit
+		}
+		if err := s.store.APIKeys().UpdateRateLimits(r.Context(), id, rpm, tpm); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp["rpm_limit"] = rpm
+		resp["tpm_limit"] = tpm
 	}
-	if err := s.store.APIKeys().UpdateAllowedModels(r.Context(), id, allowed); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":             id,
-		"allowed_models": allowed,
-	})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {

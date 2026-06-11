@@ -40,6 +40,11 @@ type Store interface {
 // slice means "no model is allowed" — useful for hard-disabling a key
 // without revoking it. Entries support glob suffix wildcards (e.g.
 // `claude-*`, `gpt-*`) so vendor families can be approved in one row.
+//
+// RPMLimit and TPMLimit are per-minute token-bucket ceilings. 0 means
+// unlimited (the default for legacy keys). Enforced by
+// api.RateLimitMiddleware via in-memory leaky buckets; resets on
+// leader restart.
 type APIKey struct {
 	ID               string
 	Hash             string
@@ -47,6 +52,8 @@ type APIKey struct {
 	Scope            string // "admin" | "user" | "node"
 	UserID           string
 	QuotaDailyTokens int64
+	RPMLimit         int
+	TPMLimit         int
 	AllowedModels    []string
 	CreatedAt        time.Time
 	Revoked          bool
@@ -62,6 +69,11 @@ type APIKeyStore interface {
 	// Pass nil for "unrestricted", an empty slice for "deny all", or a
 	// list (each entry may include a `*` suffix wildcard).
 	UpdateAllowedModels(ctx context.Context, id string, allowed []string) error
+	// UpdateRateLimits replaces the RPM/TPM ceilings on the given key.
+	// Passing 0 means "unlimited" — restores the legacy behavior. Both
+	// fields are set atomically so a partial edit can't accidentally
+	// leave one ceiling set and the other clear.
+	UpdateRateLimits(ctx context.Context, id string, rpm, tpm int) error
 }
 
 type Model struct {
@@ -226,6 +238,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     scope               TEXT NOT NULL,
     user_id             TEXT NOT NULL DEFAULT '',
     quota_daily_tokens  INTEGER NOT NULL DEFAULT 0,
+    rpm_limit           INTEGER NOT NULL DEFAULT 0,
+    tpm_limit           INTEGER NOT NULL DEFAULT 0,
     allowed_models      TEXT,
     created_at          INTEGER NOT NULL,
     revoked             INTEGER NOT NULL DEFAULT 0
@@ -327,6 +341,9 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		// v0.8 — per-key model allowlist. NULL preserves the existing
 		// "any model" behavior for keys created before this column.
 		{table: "api_keys", column: "allowed_models", ddl: `ALTER TABLE api_keys ADD COLUMN allowed_models TEXT`},
+		// v0.8 — per-key RPM / TPM ceilings. 0 = unlimited.
+		{table: "api_keys", column: "rpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0`},
+		{table: "api_keys", column: "tpm_limit", ddl: `ALTER TABLE api_keys ADD COLUMN tpm_limit INTEGER NOT NULL DEFAULT 0`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
@@ -385,9 +402,9 @@ func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
 		return fmt.Errorf("encode allowed_models: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked)
-		 VALUES(?,?,?,?,?,?,?,?,?)`,
-		k.ID, k.Hash, k.Name, k.Scope, k.UserID, k.QuotaDailyTokens, allowed,
+		`INSERT INTO api_keys(id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		k.ID, k.Hash, k.Name, k.Scope, k.UserID, k.QuotaDailyTokens, k.RPMLimit, k.TPMLimit, allowed,
 		k.CreatedAt.Unix(), boolToInt(k.Revoked)); err != nil {
 		return fmt.Errorf("insert api_key: %w", err)
 	}
@@ -396,14 +413,14 @@ func (s *sqliteAPIKeys) Create(ctx context.Context, k APIKey) error {
 
 func (s *sqliteAPIKeys) GetByHash(ctx context.Context, hash string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
 		 FROM api_keys WHERE hash = ?`, hash)
 	return scanKey(row)
 }
 
 func (s *sqliteAPIKeys) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
 		 FROM api_keys WHERE id = ?`, id)
 	return scanKey(row)
 }
@@ -413,7 +430,7 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 	var ts int64
 	var rev int
 	var allowed sql.NullString
-	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &allowed, &ts, &rev); err != nil {
+	if err := row.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &ts, &rev); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -431,7 +448,7 @@ func scanKey(row *sql.Row) (*APIKey, error) {
 
 func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, allowed_models, created_at, revoked
+		`SELECT id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, created_at, revoked
 		 FROM api_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query api_keys: %w", err)
@@ -443,7 +460,7 @@ func (s *sqliteAPIKeys) List(ctx context.Context) ([]APIKey, error) {
 		var ts int64
 		var rev int
 		var allowed sql.NullString
-		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &allowed, &ts, &rev); err != nil {
+		if err := rows.Scan(&k.ID, &k.Hash, &k.Name, &k.Scope, &k.UserID, &k.QuotaDailyTokens, &k.RPMLimit, &k.TPMLimit, &allowed, &ts, &rev); err != nil {
 			return nil, fmt.Errorf("scan api_key: %w", err)
 		}
 		k.CreatedAt = time.Unix(ts, 0)
@@ -462,6 +479,22 @@ func (s *sqliteAPIKeys) Revoke(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked = 1 WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("revoke api_key: %w", err)
+	}
+	return nil
+}
+
+func (s *sqliteAPIKeys) UpdateRateLimits(ctx context.Context, id string, rpm, tpm int) error {
+	if rpm < 0 || tpm < 0 {
+		return fmt.Errorf("rpm/tpm must be >= 0 (0 = unlimited)")
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE api_keys SET rpm_limit = ?, tpm_limit = ? WHERE id = ?`,
+		rpm, tpm, id)
+	if err != nil {
+		return fmt.Errorf("update rate limits: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", id)
 	}
 	return nil
 }
