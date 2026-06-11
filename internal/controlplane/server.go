@@ -126,6 +126,14 @@ func NewServer(cfg *config.Config, st store.Store, eng engines.Engine, cat []mod
 			VertexProject:  cfg.Router.Fallback.VertexProject,
 			VertexLocation: cfg.Router.Fallback.VertexLocation,
 			VertexURL:      cfg.Router.Fallback.VertexURL,
+			OpenRouterKey:  cfg.Router.Fallback.OpenRouterKey,
+			OpenRouterURL:  cfg.Router.Fallback.OpenRouterURL,
+			GroqKey:        cfg.Router.Fallback.GroqKey,
+			GroqURL:        cfg.Router.Fallback.GroqURL,
+			TogetherKey:    cfg.Router.Fallback.TogetherKey,
+			TogetherURL:    cfg.Router.Fallback.TogetherURL,
+			FireworksKey:   cfg.Router.Fallback.FireworksKey,
+			FireworksURL:   cfg.Router.Fallback.FireworksURL,
 		},
 	}
 	buckets := api.NewBucketStore()
@@ -360,6 +368,18 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		case "vertex":
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			s.egressH.ServeVertex(w, r)
+		case "openrouter":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeOpenRouter(w, r)
+		case "groq":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeGroq(w, r)
+		case "together":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeTogether(w, r)
+		case "fireworks":
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			s.egressH.ServeFireworks(w, r)
 		case "anthropic", "bedrock":
 			// Protocol mismatch: OpenAI-format request with a Claude model.
 			// Anthropic's API only accepts /v1/messages, so return an actionable

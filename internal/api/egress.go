@@ -45,15 +45,44 @@ type FallbackConfig struct {
 	VertexLocation string // e.g. us-central1; default us-central1
 	VertexURL      string // optional override; default https://<location>-aiplatform.googleapis.com
 
+	// OpenAI-compatible hosted gateways. Each just needs a base URL and
+	// a bearer key — request/response shape is the OpenAI shape we
+	// already speak. Model ids are prefix-tagged in the request
+	// (`openrouter/anthropic/claude-3-haiku`); the prefix is stripped
+	// before forwarding so the upstream sees its native id.
+	OpenRouterKey string
+	OpenRouterURL string // default https://openrouter.ai/api/v1
+	GroqKey       string
+	GroqURL       string // default https://api.groq.com/openai/v1
+	TogetherKey   string
+	TogetherURL   string // default https://api.together.xyz/v1
+	FireworksKey  string
+	FireworksURL  string // default https://api.fireworks.ai/inference/v1
+
 	EnabledModels map[string]bool
 }
 
 // Vendor returns the vendor a model name belongs to (or "" if it's local).
-// Order matters: Bedrock-flavored Anthropic model IDs like
-// "anthropic.claude-3-sonnet-20240229-v1:0" carry the cloud prefix, so they
-// must be matched BEFORE the plain `claude-` rule.
+// Order matters in two ways:
+//   - The slash-namespaced gateway prefixes (openrouter/, groq/, …) are
+//     matched FIRST so `openrouter/anthropic/claude-3-haiku` routes to
+//     OpenRouter, not the plain Anthropic adapter.
+//   - Bedrock-flavored Anthropic model IDs like
+//     "anthropic.claude-3-sonnet-20240229-v1:0" carry the cloud prefix,
+//     so they must beat the plain `claude-` rule.
 func Vendor(model string) string {
 	switch {
+	// OpenAI-compatible hosted gateways. Slash-namespaced so the user's
+	// intent (which gateway to use) is unambiguous.
+	case strings.HasPrefix(model, "openrouter/"):
+		return "openrouter"
+	case strings.HasPrefix(model, "groq/"):
+		return "groq"
+	case strings.HasPrefix(model, "together/"):
+		return "together"
+	case strings.HasPrefix(model, "fireworks/"):
+		return "fireworks"
+
 	// Bedrock model IDs: "anthropic.*", "amazon.*", "meta.*", "mistral.*"
 	case strings.HasPrefix(model, "anthropic."),
 		strings.HasPrefix(model, "amazon."),
@@ -203,6 +232,91 @@ func (e *EgressHandler) ServeOpenAI(w http.ResponseWriter, r *http.Request) {
 		"Content-Type":  "application/json",
 		"User-Agent":    "flock/0.2",
 	})
+}
+
+// ServeOpenRouter / ServeGroq / ServeTogether / ServeFireworks all
+// forward to an OpenAI-shape gateway. They share an implementation
+// because the only differences are: (1) the prefix to strip from the
+// model id, (2) the upstream URL, (3) the bearer key. The proxy()
+// helper handles the rest — request streaming, response framing,
+// usage record.
+func (e *EgressHandler) ServeOpenRouter(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "openrouter", "openrouter/",
+		e.Config.OpenRouterKey,
+		orDefault(e.Config.OpenRouterURL, "https://openrouter.ai/api/v1"),
+		"OPENROUTER_API_KEY")
+}
+func (e *EgressHandler) ServeGroq(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "groq", "groq/",
+		e.Config.GroqKey,
+		orDefault(e.Config.GroqURL, "https://api.groq.com/openai/v1"),
+		"GROQ_API_KEY")
+}
+func (e *EgressHandler) ServeTogether(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "together", "together/",
+		e.Config.TogetherKey,
+		orDefault(e.Config.TogetherURL, "https://api.together.xyz/v1"),
+		"TOGETHER_API_KEY")
+}
+func (e *EgressHandler) ServeFireworks(w http.ResponseWriter, r *http.Request) {
+	e.serveOpenAICompatible(w, r, "fireworks", "fireworks/",
+		e.Config.FireworksKey,
+		orDefault(e.Config.FireworksURL, "https://api.fireworks.ai/inference/v1"),
+		"FIREWORKS_API_KEY")
+}
+
+// serveOpenAICompatible reads the inbound body, strips the gateway
+// prefix from the `model` field, then forwards to the upstream. The
+// strip step is what makes `openrouter/anthropic/claude-3-haiku` work
+// — OpenRouter sees the bare `anthropic/claude-3-haiku` and routes it
+// natively.
+func (e *EgressHandler) serveOpenAICompatible(w http.ResponseWriter, r *http.Request,
+	vendor, modelPrefix, key, baseURL, envName string) {
+	if key == "" {
+		writeJSONError(w, http.StatusServiceUnavailable, "configuration_error",
+			fmt.Sprintf("%s egress not configured; set %s (or router.fallback.%s_url + key in config.yaml)",
+				vendor, envName, vendor))
+		return
+	}
+	// Read + rewrite the body. We have to read it anyway to log the
+	// model id, so the prefix strip is essentially free.
+	body, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "read_error", err.Error())
+		return
+	}
+	body = stripModelPrefix(body, modelPrefix)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+
+	url := baseURL + r.URL.Path
+	e.proxy(w, r, url, vendor, map[string]string{
+		"Authorization": "Bearer " + key,
+		"Content-Type":  "application/json",
+		"User-Agent":    "flock/0.2",
+	})
+}
+
+// stripModelPrefix rewrites the JSON body so the `model` field has its
+// gateway prefix removed. Returns the body unchanged when the prefix
+// isn't present or the body isn't valid JSON — both are reasons to
+// trust the upstream's own error message rather than fail eagerly.
+func stripModelPrefix(body []byte, prefix string) []byte {
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return body
+	}
+	m, _ := obj["model"].(string)
+	if !strings.HasPrefix(m, prefix) {
+		return body
+	}
+	obj["model"] = strings.TrimPrefix(m, prefix)
+	rewritten, err := json.Marshal(obj)
+	if err != nil {
+		return body
+	}
+	return rewritten
 }
 
 // hopByHopHeaders are the headers defined in RFC 7230 §6.1 that must not be

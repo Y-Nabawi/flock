@@ -91,6 +91,18 @@ type FallbackConfig struct {
 	VertexProject  string `yaml:"vertex_project"`
 	VertexLocation string `yaml:"vertex_location"` // default us-central1
 	VertexURL      string `yaml:"vertex_url"`      // optional override
+
+	// OpenAI-compatible hosted gateways. The corresponding env vars
+	// (OPENROUTER_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY,
+	// FIREWORKS_API_KEY) populate the key fields at runtime.
+	OpenRouterURL string `yaml:"openrouter_url"`
+	OpenRouterKey string `yaml:"-"`
+	GroqURL       string `yaml:"groq_url"`
+	GroqKey       string `yaml:"-"`
+	TogetherURL   string `yaml:"together_url"`
+	TogetherKey   string `yaml:"-"`
+	FireworksURL  string `yaml:"fireworks_url"`
+	FireworksKey  string `yaml:"-"`
 }
 
 // ObservabilityConfig holds knobs for traces/logs/metrics integrations
@@ -221,6 +233,22 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
 		c.Router.Fallback.OpenAIKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
+		c.Router.Fallback.OpenRouterKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("GROQ_API_KEY"); v != "" {
+		c.Router.Fallback.GroqKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("TOGETHER_API_KEY"); v != "" {
+		c.Router.Fallback.TogetherKey = v
+		c.Router.Fallback.Enabled = true
+	}
+	if v := os.Getenv("FIREWORKS_API_KEY"); v != "" {
+		c.Router.Fallback.FireworksKey = v
 		c.Router.Fallback.Enabled = true
 	}
 	if v := os.Getenv("FLOCK_OTLP_ENDPOINT"); v != "" {
