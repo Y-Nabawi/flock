@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -290,6 +291,7 @@ func (s *Server) routes() http.Handler {
 			// Observability
 			r.Get("/usage/recent", s.listUsageRecent)
 			r.Get("/usage/summary", s.usageSummary)
+			r.Get("/usage/breakdown", s.usageBreakdown)
 			r.Get("/audit/recent", s.listAuditRecent)
 			r.Get("/audit/summary", s.auditSummary)
 
@@ -1181,6 +1183,81 @@ func (s *Server) listUsageRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, us)
+}
+
+// usageBreakdown serves time-bucketed aggregates of the usage table.
+//
+//	GET /admin/v1/usage/breakdown
+//	  ?bucket=hour|day|month|total      (default: day)
+//	  &since=YYYY-MM-DD                  (default: 30 days ago)
+//	  &until=YYYY-MM-DD                  (default: now)
+//	  &group_by=user,model,protocol,outcome   (comma-separated, any order)
+//	  &limit=N                           (0 = no cap)
+//
+// Response:
+//
+//	{
+//	  "rows":   [{"bucket":"2026-06-09","user":"alice","model":"qwen3.6-27b","prompt_tokens":12345,"completion_tokens":6789,"requests":42}, …],
+//	  "totals": {"prompt_tokens":…, "completion_tokens":…, "requests":…}
+//	}
+func (s *Server) usageBreakdown(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	opts := store.BreakdownOpts{
+		Bucket: q.Get("bucket"),
+	}
+	if v := q.Get("since"); v != "" {
+		t, err := parseDateFlexible(v)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid since: "+err.Error())
+			return
+		}
+		opts.Since = t
+	}
+	if v := q.Get("until"); v != "" {
+		t, err := parseDateFlexible(v)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid until: "+err.Error())
+			return
+		}
+		opts.Until = t
+	}
+	if v := q.Get("group_by"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				opts.GroupBy = append(opts.GroupBy, p)
+			}
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			opts.Limit = n
+		}
+	}
+	rows, totals, err := s.store.Usage().Breakdown(r.Context(), opts)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":   rows,
+		"totals": totals,
+		"bucket": opts.Bucket,
+		"since":  opts.Since,
+		"until":  opts.Until,
+	})
+}
+
+// parseDateFlexible accepts either a YYYY-MM-DD or an RFC3339 timestamp.
+// Dates are interpreted in UTC at midnight so "since=2026-06-01" matches
+// "the start of June 1".
+func parseDateFlexible(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("expected YYYY-MM-DD or RFC3339, got %q", s)
 }
 
 func (s *Server) listAuditRecent(w http.ResponseWriter, r *http.Request) {

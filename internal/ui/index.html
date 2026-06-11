@@ -1782,10 +1782,83 @@ async function renderUsage() {
       outcomeBadge(u.Outcome),
     ]);
     root.innerHTML = `
+      <div class="bg-white border border-slate-200 rounded p-4 mb-4">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 class="text-lg font-semibold">Breakdown</h2>
+          <div class="flex gap-2 text-xs items-center">
+            <label class="text-slate-500">Bucket</label>
+            <select id="bdBucket" onchange="loadBreakdown()" class="border border-slate-300 rounded px-2 py-1">
+              <option value="day">day</option>
+              <option value="hour">hour</option>
+              <option value="month">month</option>
+              <option value="total">total</option>
+            </select>
+            <label class="text-slate-500">Group by</label>
+            <select id="bdGroupBy" onchange="loadBreakdown()" class="border border-slate-300 rounded px-2 py-1">
+              <option value="user,model">user + model</option>
+              <option value="user">user</option>
+              <option value="model">model</option>
+              <option value="protocol">protocol</option>
+              <option value="outcome">outcome</option>
+            </select>
+            <label class="text-slate-500">Since</label>
+            <input id="bdSince" type="date" class="border border-slate-300 rounded px-2 py-1" onchange="loadBreakdown()" />
+          </div>
+        </div>
+        <div id="bdHost" class="overflow-auto"><div class="text-xs text-slate-500">Pick options to load…</div></div>
+      </div>
+
       <h2 class="text-lg font-semibold mb-3">Recent requests</h2>
       ${table(["Time", "User/Key", "Model", "Protocol", "In", "Out", "Latency", "Outcome"], rows)}`;
+    // Default "since" = 7 days back so the breakdown is meaningful out of the box.
+    const since = new Date(Date.now() - 7 * 86400000);
+    const isoDate = since.toISOString().slice(0, 10);
+    $("#bdSince").value = isoDate;
+    loadBreakdown();
   } catch (e) {
     root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+  }
+}
+
+// loadBreakdown queries /admin/v1/usage/breakdown with the current
+// bucket / group_by / since controls and renders a pivot table + a
+// footer with totals.
+async function loadBreakdown() {
+  const host = $("#bdHost");
+  if (!host) return;
+  const bucket = $("#bdBucket")?.value || "day";
+  const groupBy = $("#bdGroupBy")?.value || "user,model";
+  const since = $("#bdSince")?.value || "";
+  let q = `/admin/v1/usage/breakdown?bucket=${bucket}&group_by=${encodeURIComponent(groupBy)}`;
+  if (since) q += `&since=${since}`;
+  try {
+    const resp = await api(q);
+    const rows = resp.rows || [];
+    if (rows.length === 0) {
+      host.innerHTML = `<div class="text-xs text-slate-500">No usage in that window.</div>`;
+      return;
+    }
+    const groups = groupBy.split(",");
+    const headers = ["Bucket"].concat(groups.map((g) => g.toUpperCase()))
+      .concat(["Prompt", "Completion", "Requests"]);
+    const tableRows = rows.map((r) => {
+      const cells = [r.bucket].concat(groups.map((g) => r[g] || ""))
+        .concat([
+          (r.prompt_tokens || 0).toLocaleString(),
+          (r.completion_tokens || 0).toLocaleString(),
+          (r.requests || 0).toLocaleString(),
+        ]);
+      return cells;
+    });
+    const t = resp.totals || {};
+    host.innerHTML = table(headers, tableRows) +
+      `<div class="mt-2 text-xs text-slate-600">
+         Totals — prompt: ${(t.prompt_tokens || 0).toLocaleString()},
+         completion: ${(t.completion_tokens || 0).toLocaleString()},
+         requests: ${(t.requests || 0).toLocaleString()}
+       </div>`;
+  } catch (e) {
+    host.innerHTML = `<div class="text-xs text-red-600">${e.message}</div>`;
   }
 }
 

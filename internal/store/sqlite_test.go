@@ -77,6 +77,90 @@ func TestAPIKeyAllowedModelsRoundtrip(t *testing.T) {
 	}
 }
 
+// TestUsageBreakdown_ByDayAndModel writes a few synthetic usage rows
+// then verifies the bucketed query rolls them up correctly.
+func TestUsageBreakdown_ByDayAndModel(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenSQLite(filepath.Join(dir, "u.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	// Two rows on 2026-06-08 for alice/qwen, two for bob/claude on
+	// 2026-06-09, and one alice/qwen on 2026-06-09.
+	rows := []Usage{
+		{TS: mustDay(t, "2026-06-08T10:00:00Z"), UserID: "alice", Model: "qwen3-14b", PromptTokens: 100, CompletionTokens: 50, Protocol: "openai", Outcome: "ok"},
+		{TS: mustDay(t, "2026-06-08T11:00:00Z"), UserID: "alice", Model: "qwen3-14b", PromptTokens: 200, CompletionTokens: 100, Protocol: "openai", Outcome: "ok"},
+		{TS: mustDay(t, "2026-06-09T09:00:00Z"), UserID: "bob", Model: "claude-3-5-sonnet", PromptTokens: 80, CompletionTokens: 40, Protocol: "anthropic", Outcome: "ok"},
+		{TS: mustDay(t, "2026-06-09T10:00:00Z"), UserID: "bob", Model: "claude-3-5-sonnet", PromptTokens: 80, CompletionTokens: 40, Protocol: "anthropic", Outcome: "error"},
+		{TS: mustDay(t, "2026-06-09T11:00:00Z"), UserID: "alice", Model: "qwen3-14b", PromptTokens: 50, CompletionTokens: 25, Protocol: "openai", Outcome: "ok"},
+	}
+	for _, r := range rows {
+		if err := st.Usage().Record(ctx, r); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	got, totals, err := st.Usage().Breakdown(ctx, BreakdownOpts{
+		Bucket:  "day",
+		Since:   mustDay(t, "2026-06-08T00:00:00Z"),
+		Until:   mustDay(t, "2026-06-10T00:00:00Z"),
+		GroupBy: []string{"user", "model"},
+	})
+	if err != nil {
+		t.Fatalf("Breakdown: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 groups (alice+qwen on 08, bob+claude on 09, alice+qwen on 09), got %d: %+v", len(got), got)
+	}
+	if totals.Requests != 5 {
+		t.Errorf("totals.Requests = %d, want 5", totals.Requests)
+	}
+	if totals.PromptTokens != 510 {
+		t.Errorf("totals.PromptTokens = %d, want 510", totals.PromptTokens)
+	}
+
+	// totals mode rolls everything into one bucket.
+	tot, _, err := st.Usage().Breakdown(ctx, BreakdownOpts{
+		Bucket:  "total",
+		Since:   mustDay(t, "2026-06-08T00:00:00Z"),
+		Until:   mustDay(t, "2026-06-10T00:00:00Z"),
+		GroupBy: []string{"model"},
+	})
+	if err != nil {
+		t.Fatalf("Breakdown total: %v", err)
+	}
+	if len(tot) != 2 {
+		t.Fatalf("expected 2 models in total mode, got %d: %+v", len(tot), tot)
+	}
+}
+
+func TestUsageBreakdown_RejectsUnknownGroupBy(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenSQLite(filepath.Join(dir, "u.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer st.Close()
+	_, _, err = st.Usage().Breakdown(context.Background(), BreakdownOpts{
+		GroupBy: []string{"made_up_field"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown group_by token")
+	}
+}
+
+func mustDay(t *testing.T, iso string) time.Time {
+	t.Helper()
+	tt, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		t.Fatalf("parse %s: %v", iso, err)
+	}
+	return tt
+}
+
 // sameSlice treats nil and []string{} as distinct (the allowlist
 // semantics depend on the distinction), but slice equality is by value.
 func sameSlice(a, b []string) bool {

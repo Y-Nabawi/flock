@@ -7,30 +7,38 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hadihonarvar/flock/internal/config"
 )
 
-// cmdUsage prints the recent usage records.
+// cmdUsage prints the recent usage records or time-bucketed aggregates.
 //
 //	flock usage [--limit=N] [--user=X]
+//	flock usage --by user,model --bucket day --since 2026-06-01
 func cmdUsage(args []string) {
 	args, asJSON := extractJSONFlag(args)
 	fs := flag.NewFlagSet("usage", flag.ExitOnError)
 	limit := fs.Int("limit", 50, "maximum number of rows to show")
 	user := fs.String("user", "", "filter to a specific user_id (client-side)")
 	summary := fs.Bool("summary", false, "show aggregate stats (total, top models, p50/p95, error rate) instead of rows")
+	by := fs.String("by", "", "time-bucketed breakdown: comma-separated subset of user,model,protocol,outcome")
+	bucket := fs.String("bucket", "day", "time bucket for --by: hour|day|month|total")
+	since := fs.String("since", "", "ISO date (YYYY-MM-DD) for --by — defaults to 30 days ago")
+	until := fs.String("until", "", "ISO date (YYYY-MM-DD) for --by — defaults to now")
 	fs.Usage = func() {
 		showHelp(helpSpec{
 			name:    "usage",
 			summary: "show recent inference usage records",
-			usage:   "flock usage [--limit N] [--user X] [--summary] [--json]",
+			usage:   "flock usage [--limit N] [--user X] [--summary] [--json] | flock usage --by user,model --bucket day --since YYYY-MM-DD",
 			flags:   fs,
 			examples: []string{
-				"flock usage                 # latest 50 records",
-				"flock usage --limit 200     # latest 200",
-				"flock usage --user alice    # filter by user",
-				"flock usage --summary       # aggregate view (top models, p50/p95, error rate)",
-				"flock usage --summary --json",
-				"flock usage --json          # machine-readable rows",
+				"flock usage                                     # latest 50 records",
+				"flock usage --limit 200                         # latest 200",
+				"flock usage --user alice                        # filter by user",
+				"flock usage --summary                           # aggregate view (top models, p50/p95, error rate)",
+				"flock usage --by user --bucket day --since 2026-05-01      # per-user-per-day",
+				"flock usage --by model --bucket month                       # monthly per-model",
+				"flock usage --by user,model --bucket total --json           # totals, scriptable",
 			},
 		})
 	}
@@ -40,6 +48,11 @@ func cmdUsage(args []string) {
 	_ = fs.Parse(args)
 
 	cfg := loadConfigOrExit()
+
+	if *by != "" {
+		usageBreakdown(cfg, *by, *bucket, *since, *until, *limit, asJSON)
+		return
+	}
 
 	if *summary {
 		body, err := adminCall(context.Background(), cfg, "GET", "/admin/v1/usage/summary", nil)
@@ -215,4 +228,85 @@ func firstNonEmpty(vals ...any) any {
 		}
 	}
 	return ""
+}
+
+// usageBreakdown fetches /admin/v1/usage/breakdown and renders the rows.
+// `--by` accepts a comma-separated list of {user,model,protocol,outcome};
+// `--bucket` ∈ {hour,day,month,total}; `--since`/`--until` are dates.
+func usageBreakdown(cfg *config.Config, by, bucket, since, until string, limit int, asJSON bool) {
+	q := fmt.Sprintf("/admin/v1/usage/breakdown?bucket=%s&group_by=%s", bucket, by)
+	if since != "" {
+		q += "&since=" + since
+	}
+	if until != "" {
+		q += "&until=" + until
+	}
+	if limit > 0 {
+		q += fmt.Sprintf("&limit=%d", limit)
+	}
+	body, err := adminCall(context.Background(), cfg, "GET", q, nil)
+	if err != nil {
+		die("%v: %s", err, string(body))
+	}
+	if asJSON {
+		fmt.Println(string(body))
+		return
+	}
+	var resp struct {
+		Rows []struct {
+			Bucket           string `json:"bucket"`
+			User             string `json:"user,omitempty"`
+			Model            string `json:"model,omitempty"`
+			Protocol         string `json:"protocol,omitempty"`
+			Outcome          string `json:"outcome,omitempty"`
+			PromptTokens     int64  `json:"prompt_tokens"`
+			CompletionTokens int64  `json:"completion_tokens"`
+			Requests         int64  `json:"requests"`
+		} `json:"rows"`
+		Totals struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			Requests         int64 `json:"requests"`
+		} `json:"totals"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		die("decode breakdown: %v", err)
+	}
+	if len(resp.Rows) == 0 {
+		fmt.Println("(no usage in the requested window)")
+		return
+	}
+	groups := strings.Split(by, ",")
+	header := []string{bold(fmt.Sprintf("%-19s", "BUCKET"))}
+	for _, g := range groups {
+		header = append(header, bold(fmt.Sprintf("%-22s", strings.ToUpper(strings.TrimSpace(g)))))
+	}
+	header = append(header,
+		bold(fmt.Sprintf("%10s", "PROMPT")),
+		bold(fmt.Sprintf("%10s", "COMPL")),
+		bold(fmt.Sprintf("%10s", "REQS")))
+	fmt.Println(strings.Join(header, " "))
+	for _, r := range resp.Rows {
+		cols := []string{padDim(r.Bucket, 19)}
+		for _, g := range groups {
+			switch strings.TrimSpace(g) {
+			case "user":
+				cols = append(cols, padCyan(r.User, 22))
+			case "model":
+				cols = append(cols, padCyan(r.Model, 22))
+			case "protocol":
+				cols = append(cols, fmt.Sprintf("%-22s", r.Protocol))
+			case "outcome":
+				cols = append(cols, fmt.Sprintf("%-22s", r.Outcome))
+			}
+		}
+		cols = append(cols,
+			fmt.Sprintf("%10d", r.PromptTokens),
+			fmt.Sprintf("%10d", r.CompletionTokens),
+			fmt.Sprintf("%10d", r.Requests))
+		fmt.Println(strings.Join(cols, " "))
+	}
+	fmt.Println()
+	fmt.Printf("%s  prompt=%d  completion=%d  requests=%d\n",
+		bold("Totals"), resp.Totals.PromptTokens, resp.Totals.CompletionTokens, resp.Totals.Requests)
 }

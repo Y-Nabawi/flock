@@ -182,6 +182,48 @@ type UsageStore interface {
 	SumTokensSince(ctx context.Context, apiKeyID string, since time.Time) (int64, error)
 	RecentByUser(ctx context.Context, userID string, limit int) ([]Usage, error)
 	Recent(ctx context.Context, limit int) ([]Usage, error)
+	// Breakdown aggregates the usage table by time bucket and the
+	// chosen grouping columns. Each non-empty group_by entry adds a
+	// SELECT column and a GROUP BY term. Returns the rows + the
+	// totals across all rows in the same bucket range.
+	Breakdown(ctx context.Context, opts BreakdownOpts) ([]BreakdownRow, BreakdownTotals, error)
+}
+
+// BreakdownOpts describes the time-bucketed query.
+type BreakdownOpts struct {
+	// Bucket selects the time-rollup granularity. Valid: "hour",
+	// "day", "month", "total". Defaults to "day" when empty.
+	Bucket string
+	// Since / Until bound the time range. Zero values mean "open
+	// ended" — Since defaults to 30 days ago, Until to now.
+	Since time.Time
+	Until time.Time
+	// GroupBy is an ordered subset of {"user","model","protocol","outcome"}.
+	// Empty groups by the time bucket only.
+	GroupBy []string
+	// Limit caps the number of returned rows. 0 = no limit.
+	Limit int
+}
+
+// BreakdownRow is one aggregated row.
+type BreakdownRow struct {
+	Bucket           string `json:"bucket"`
+	User             string `json:"user,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Protocol         string `json:"protocol,omitempty"`
+	Outcome          string `json:"outcome,omitempty"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	Requests         int64  `json:"requests"`
+}
+
+// BreakdownTotals sums everything in the bucket range — useful for the
+// dashboard "totals" footer and as a sanity check that group_by didn't
+// double-count.
+type BreakdownTotals struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	Requests         int64 `json:"requests"`
 }
 
 // AuditEntry records an action taken via the admin API or gateway.
@@ -305,6 +347,8 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage(api_key_id, ts);
 CREATE INDEX IF NOT EXISTS idx_usage_user_ts ON usage(user_id, ts);
+CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
+CREATE INDEX IF NOT EXISTS idx_usage_model_ts ON usage(model, ts);
 
 CREATE TABLE IF NOT EXISTS audit_log (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -894,6 +938,121 @@ func (s *sqliteUsage) RecentByUser(ctx context.Context, userID string, limit int
 	}
 	defer rows.Close()
 	return scanUsage(rows)
+}
+
+// bucketExpr returns the SQL expression that maps the unix ts column to
+// a bucket label. "total" collapses all rows into a single bucket so
+// the grouping helpers below stay uniform.
+func bucketExpr(bucket string) string {
+	switch bucket {
+	case "hour":
+		return `strftime('%Y-%m-%d %H:00', ts, 'unixepoch')`
+	case "month":
+		return `strftime('%Y-%m', ts, 'unixepoch')`
+	case "total":
+		return `'all'`
+	default: // "day" + unspecified
+		return `strftime('%Y-%m-%d', ts, 'unixepoch')`
+	}
+}
+
+// groupColumn maps the user-facing group_by token to the actual SQL
+// column. Returning "", false signals an unknown token and the caller
+// rejects the request with a 400.
+func groupColumn(token string) (sqlCol string, ok bool) {
+	switch token {
+	case "user":
+		return "user_id", true
+	case "model":
+		return "model", true
+	case "protocol":
+		return "protocol", true
+	case "outcome":
+		return "outcome", true
+	}
+	return "", false
+}
+
+func (s *sqliteUsage) Breakdown(ctx context.Context, opts BreakdownOpts) ([]BreakdownRow, BreakdownTotals, error) {
+	if opts.Bucket == "" {
+		opts.Bucket = "day"
+	}
+	// Normalize since/until with sensible defaults.
+	now := time.Now()
+	if opts.Since.IsZero() {
+		opts.Since = now.AddDate(0, 0, -30)
+	}
+	if opts.Until.IsZero() {
+		opts.Until = now
+	}
+
+	groupCols := make([]string, 0, len(opts.GroupBy))
+	for _, g := range opts.GroupBy {
+		col, ok := groupColumn(g)
+		if !ok {
+			return nil, BreakdownTotals{}, fmt.Errorf("unsupported group_by token %q (try user|model|protocol|outcome)", g)
+		}
+		groupCols = append(groupCols, col)
+	}
+	bucket := bucketExpr(opts.Bucket)
+
+	// SELECT list: bucket label, each group col, then the three aggregates.
+	selectList := []string{bucket + " AS bucket"}
+	selectList = append(selectList, groupCols...)
+	selectList = append(selectList,
+		"SUM(prompt_tokens) AS pt",
+		"SUM(completion_tokens) AS ct",
+		"COUNT(*) AS reqs",
+	)
+	groupList := append([]string{"bucket"}, groupCols...)
+
+	query := "SELECT " + strings.Join(selectList, ", ") +
+		" FROM usage WHERE ts >= ? AND ts < ?" +
+		" GROUP BY " + strings.Join(groupList, ", ") +
+		" ORDER BY bucket DESC, reqs DESC"
+	if opts.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, opts.Since.Unix(), opts.Until.Unix())
+	if err != nil {
+		return nil, BreakdownTotals{}, fmt.Errorf("breakdown query: %w", err)
+	}
+	defer rows.Close()
+
+	out := []BreakdownRow{}
+	var totals BreakdownTotals
+	for rows.Next() {
+		var r BreakdownRow
+		dest := []any{&r.Bucket}
+		// One scan slot per group column; we route the value into the
+		// matching BreakdownRow field in the same order as opts.GroupBy.
+		groupVals := make([]string, len(opts.GroupBy))
+		for i := range opts.GroupBy {
+			dest = append(dest, &groupVals[i])
+		}
+		dest = append(dest, &r.PromptTokens, &r.CompletionTokens, &r.Requests)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, BreakdownTotals{}, fmt.Errorf("scan breakdown: %w", err)
+		}
+		for i, g := range opts.GroupBy {
+			switch g {
+			case "user":
+				r.User = groupVals[i]
+			case "model":
+				r.Model = groupVals[i]
+			case "protocol":
+				r.Protocol = groupVals[i]
+			case "outcome":
+				r.Outcome = groupVals[i]
+			}
+		}
+		totals.PromptTokens += r.PromptTokens
+		totals.CompletionTokens += r.CompletionTokens
+		totals.Requests += r.Requests
+		out = append(out, r)
+	}
+	return out, totals, rows.Err()
 }
 
 func scanUsage(rows *sql.Rows) ([]Usage, error) {
