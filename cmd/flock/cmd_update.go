@@ -34,26 +34,26 @@ func cmdUpdate(args []string) {
 	check := fs.Bool("check", false, "only check for an update, don't install")
 	pinned := fs.String("version", "", "install a specific version (e.g. v0.1.1) instead of latest")
 	force := fs.Bool("force", false, "install even if already on the latest version")
-	fs.Usage = func() {
-		showHelp(helpSpec{
-			name:    "update",
-			summary: "check for and install the latest Flock release",
-			usage:   "flock update [--check] [--version <vX.Y.Z>] [--force]",
-			flags:   fs,
-			examples: []string{
-				"flock update                    # upgrade to latest",
-				"flock update --check            # just check, no install",
-				"flock update --version v0.1.1   # pin specific version",
-				"flock upgrade                   # alias of `update`",
-			},
-			notes: []string{
-				"After installing, restart with `flock down && flock up` if it was running.",
-				"If the install path needs sudo (e.g. /usr/local/bin), you'll be told the exact command to run.",
-			},
-		})
+	help := helpSpec{
+		name:    "update",
+		summary: "check for and install the latest Flock release",
+		usage:   "flock update [--check] [--version <vX.Y.Z>] [--force]",
+		flags:   fs,
+		examples: []string{
+			"flock update                    # upgrade to latest",
+			"flock update --check            # just check, no install",
+			"flock update --version v0.1.1   # pin specific version",
+			"flock upgrade                   # alias of `update`",
+		},
+		notes: []string{
+			"After installing, restart with `flock down && flock up` if it was running.",
+			"If the install path needs sudo (e.g. /usr/local/bin), you'll be told the exact command to run.",
+		},
 	}
+	// Bad flags: print usage to stderr and let ExitOnError exit 2.
+	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
-		fs.Usage()
+		showHelp(help)
 	}
 	_ = fs.Parse(args)
 
@@ -346,11 +346,13 @@ func MaybeShowUpdateNotice(w io.Writer) {
 
 	cachePath := updateCheckCachePath()
 	if cached, ok := readCachedLatest(cachePath, 24*time.Hour); ok {
-		// Self-heal: if the cached "latest" is older than what we're
-		// already running (e.g. cache was written before `flock update`
-		// jumped us several patches), discard it and refetch. Otherwise
-		// we'd cheerfully advertise a downgrade for the next 24h.
-		if cmpVersion(normalizeVersion(cached), normalizeVersion("v"+version)) > 0 {
+		// Self-heal: only when the cached "latest" is strictly OLDER than
+		// what we're already running (e.g. cache was written before
+		// `flock update` jumped us several patches) is it useless —
+		// discard it and refetch. Otherwise we'd cheerfully advertise a
+		// downgrade for the next 24h. An up-to-date cache (==) is valid:
+		// honor the TTL and stay off the network.
+		if cmpVersion(normalizeVersion(cached), normalizeVersion("v"+version)) >= 0 {
 			printUpdateNoticeIfNewer(w, cached)
 			return
 		}

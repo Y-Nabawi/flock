@@ -33,3 +33,36 @@ func red(s string) string    { return ansi("31", s) }
 func green(s string) string  { return ansi("32", s) }
 func yellow(s string) string { return ansi("33", s) }
 func cyan(s string) string   { return ansi("36", s) }
+
+// ansiCodes returns the raw bold/dim/reset escape strings, or empties when
+// color is off. For call sites that interpolate the codes directly into
+// Printf format strings rather than wrapping one value — same gating as
+// the helpers above, so pipes and FLOCK_NO_COLOR stay escape-free.
+func ansiCodes() (boldCode, dimCode, resetCode string) {
+	if !colorEnabled {
+		return "", "", ""
+	}
+	return "\033[1m", "\033[2m", "\033[0m"
+}
+
+// colorEnabledStderr mirrors colorEnabled for output drawn on stderr (the
+// progress bar): same NO_COLOR / FLOCK_NO_COLOR opt-outs, but keyed to
+// stderr's TTY-ness — `flock model add … > log` still has an interactive
+// stderr, and `2> log` must stay escape-free even when stdout is a TTY.
+var colorEnabledStderr = func() bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("FLOCK_NO_COLOR") != "" {
+		return false
+	}
+	return isatty.IsTerminal(os.Stderr.Fd())
+}()
+
+// ansiErr is ansi gated on stderr's color switch instead of stdout's.
+func ansiErr(code, s string) string {
+	if !colorEnabledStderr {
+		return s
+	}
+	return "\033[" + code + "m" + s + "\033[0m"
+}
+
+func greenErr(s string) string { return ansiErr("32", s) }
+func dimErr(s string) string   { return ansiErr("2", s) }

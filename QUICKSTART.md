@@ -375,6 +375,7 @@ A summary table of the 37 catalog entries — see `flock model search` for the l
 | Catalog id | What it's for | RAM | Engine name |
 |---|---|---|---|
 | `llama-3.2-1b` | smoke test | 2 GB | `ollama:llama3.2:1b` |
+| `nomic-embed-text` | embeddings for RAG (768-dim, 8K ctx) | 2 GB | `ollama:nomic-embed-text` |
 | `llama-3.2-3b` ⭐ | small fast chat | 4 GB | `ollama:llama3.2:3b` |
 | `moondream3` | tiny vision-language (Raspberry Pi) | 4 GB | `hf: moondream/moondream3-preview` (vLLM/MLX) |
 | `qwen-coder-7b` | code completion + chat | 8 GB | `ollama:qwen2.5-coder:7b` |

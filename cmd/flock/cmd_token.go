@@ -16,7 +16,7 @@ func cmdToken(args []string) {
 	help := helpSpec{
 		name:    "token",
 		summary: "manage API keys and node-join tokens",
-		usage:   "flock token <create [name] [--admin|--node] [--models a,b,…] | ls | edit <id> ... | revoke <id>>",
+		usage:   "flock token <create [name] [--admin|--node] [--models a,b,…] | ls | edit <id> ... | expire <id> [--in D] | renew <id> --ttl D | budget <add|ls|rm> <id> ... | revoke <id>>",
 		examples: []string{
 			"flock token create alice                            # user-scope key for dev `alice`",
 			"flock token create alice-admin --admin              # admin-scope key (can call /admin/v1/*)",
@@ -73,38 +73,43 @@ func cmdToken(args []string) {
 					name = "node-join"
 				}
 			case "--models":
-				if i+1 < len(args) {
-					models = parseModelList(args[i+1])
-					i++
+				if i+1 >= len(args) {
+					die("--models requires a comma-separated list (e.g. --models qwen3-14b,claude-*)")
 				}
+				models = parseModelList(args[i+1])
+				i++
 			case "--rpm":
-				if i+1 < len(args) {
-					rpm = parseIntFlag(args[i+1], "--rpm")
-					i++
+				if i+1 >= len(args) {
+					die("--rpm requires a value (0 = unlimited)")
 				}
+				rpm = parseIntFlag(args[i+1], "--rpm")
+				i++
 			case "--tpm":
-				if i+1 < len(args) {
-					tpm = parseIntFlag(args[i+1], "--tpm")
-					i++
+				if i+1 >= len(args) {
+					die("--tpm requires a value (0 = unlimited)")
 				}
+				tpm = parseIntFlag(args[i+1], "--tpm")
+				i++
 			case "--ttl":
-				if i+1 < len(args) {
-					d, err := parseFlexibleDuration(args[i+1])
-					if err != nil {
-						die("invalid --ttl: %v", err)
-					}
-					expiresAt = time.Now().Add(d)
-					i++
+				if i+1 >= len(args) {
+					die("--ttl requires a duration (e.g. 30m, 2h, 7d)")
 				}
+				d, err := parseFlexibleDuration(args[i+1])
+				if err != nil {
+					die("invalid --ttl: %v", err)
+				}
+				expiresAt = time.Now().Add(d)
+				i++
 			case "--expires-at":
-				if i+1 < len(args) {
-					t, err := parseFlexibleDate(args[i+1])
-					if err != nil {
-						die("invalid --expires-at: %v", err)
-					}
-					expiresAt = t
-					i++
+				if i+1 >= len(args) {
+					die("--expires-at requires YYYY-MM-DD or RFC3339")
 				}
+				t, err := parseFlexibleDate(args[i+1])
+				if err != nil {
+					die("invalid --expires-at: %v", err)
+				}
+				expiresAt = t
+				i++
 			default:
 				if strings.HasPrefix(a, "--models=") {
 					models = parseModelList(strings.TrimPrefix(a, "--models="))
@@ -399,7 +404,9 @@ func tokenEdit(id string, args []string) {
 	}
 
 	current := append([]string(nil), key.AllowedModels...)
-	hadList := key.AllowedModels != nil
+	hadOriginalList := key.AllowedModels != nil
+	hadList := hadOriginalList
+	addUsed, removeUsed := false, false
 	var setList []string
 	setExplicit := false
 	clearRestriction := false
@@ -414,6 +421,7 @@ func tokenEdit(id string, args []string) {
 			}
 			current = appendUnique(current, args[i+1])
 			hadList = true
+			addUsed = true
 			i++
 		case "--remove-model":
 			if i+1 >= len(args) {
@@ -421,6 +429,7 @@ func tokenEdit(id string, args []string) {
 			}
 			current = removeOne(current, args[i+1])
 			hadList = true
+			removeUsed = true
 			i++
 		case "--set-models":
 			if i+1 >= len(args) {
@@ -449,11 +458,13 @@ func tokenEdit(id string, args []string) {
 			if strings.HasPrefix(a, "--add-model=") {
 				current = appendUnique(current, strings.TrimPrefix(a, "--add-model="))
 				hadList = true
+				addUsed = true
 				continue
 			}
 			if strings.HasPrefix(a, "--remove-model=") {
 				current = removeOne(current, strings.TrimPrefix(a, "--remove-model="))
 				hadList = true
+				removeUsed = true
 				continue
 			}
 			if strings.HasPrefix(a, "--set-models=") {
@@ -479,6 +490,14 @@ func tokenEdit(id string, args []string) {
 	rateChange := rpmSet || tpmSet
 	if !allowlistChange && !rateChange {
 		die("no edit flag given (try --add-model, --remove-model, --set-models, --clear-models, --rpm, --tpm)")
+	}
+
+	// A key with NO allowlist allows every model. Removing from "all
+	// models" can't produce a sensible list — the naive result would be
+	// an empty list, i.e. deny-all. Refuse unless this invocation also
+	// defines a list (--set-models / --add-model / --clear-models).
+	if removeUsed && !hadOriginalList && !setExplicit && !addUsed && !clearRestriction {
+		die("%s allows all models (no allowlist) — removing one would deny EVERY model; use --set-models to define an allowlist first", id)
 	}
 
 	if allowlistChange {
@@ -508,6 +527,9 @@ func tokenEdit(id string, args []string) {
 			ok(os.Stdout, "%s: allowlist now denies every model", id)
 		default:
 			ok(os.Stdout, "%s: allowed models = %s", id, strings.Join(newAllowed, ", "))
+			if addUsed && !hadOriginalList && !setExplicit {
+				warn(os.Stdout, "%s previously allowed ALL models — it is now RESTRICTED to the list above (undo with --clear-models)", id)
+			}
 		}
 	}
 	if rateChange {

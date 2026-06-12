@@ -37,13 +37,7 @@ scrape_configs:
       - targets: ['localhost:8080']
 ```
 
-If your Flock leader requires an API key on the metrics endpoint (set `auth.require_keys: true` in `~/.flock/config.yaml`), add a bearer header:
-
-```yaml
-    authorization:
-      type: Bearer
-      credentials: sk-orc-...
-```
+**Note:** `/metrics` is registered before the auth middleware and is always unauthenticated by design — `auth.require_keys` only protects the `/v1/*` API surface, not metrics. If your Flock leader is reachable beyond localhost, protect the endpoint at the network level: bind the leader to a private interface, firewall the port to your Prometheus host, or front it with a reverse proxy that enforces auth. (A `authorization:` bearer block in the scrape config is only meaningful if such a proxy requires it — Flock itself ignores it on `/metrics`.)
 
 ## Compatibility
 

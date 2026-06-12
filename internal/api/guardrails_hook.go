@@ -14,17 +14,32 @@ import (
 // applyPreCallGuardrails walks the configured pre + logging_only
 // chains over the request body. Returns the (possibly-rewritten) body
 // and a bool: if false, the handler should stop — a `block` action
-// has already been written to the response.
+// has already been written to the response in the OpenAI error shape.
+// The Anthropic handler uses evalPreCallGuardrails directly and writes
+// its own protocol-shaped error.
+func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
+	current, blockedBy, reason := evalPreCallGuardrails(ctx, st, body)
+	if blockedBy != "" {
+		writeGuardrailBlocked(w, blockedBy, reason)
+		return nil, false
+	}
+	return current, true
+}
+
+// evalPreCallGuardrails is the protocol-agnostic core of the pre-call
+// hook. Returns the (possibly-rewritten) body plus — when a pre
+// guardrail blocked the request — the blocking guardrail's name and
+// reason. blockedBy == "" means the request may proceed.
 //
 // Order of evaluation: pre first (in declared order), then
 // logging_only. A `block` from any pre guardrail short-circuits the
 // chain; logging_only entries can't block. Each guardrail observes
 // the latest body (so a `rewrite` from guardrail #1 is what
 // guardrail #2 sees).
-func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store.Store, body []byte) ([]byte, bool) {
+func evalPreCallGuardrails(ctx context.Context, st store.Store, body []byte) (out []byte, blockedBy, reason string) {
 	reg := globalGuardrails
 	if reg.IsEmpty() {
-		return body, true
+		return body, "", ""
 	}
 	current := body
 	// Pre chain — block / rewrite / allow.
@@ -35,8 +50,7 @@ func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store
 			switch act.Kind {
 			case "block":
 				recordGuardrailAudit(ctx, st, g.Name(), "block", act.Reason)
-				writeGuardrailBlocked(w, g.Name(), act.Reason)
-				return nil, false
+				return nil, g.Name(), act.Reason
 			case "rewrite":
 				current = act.NewBody
 			case "flag":
@@ -56,7 +70,7 @@ func applyPreCallGuardrails(ctx context.Context, w http.ResponseWriter, st store
 			}
 		}
 	}
-	return current, true
+	return current, "", ""
 }
 
 func writeGuardrailBlocked(w http.ResponseWriter, name, reason string) {
@@ -71,6 +85,16 @@ func writeGuardrailBlocked(w http.ResponseWriter, name, reason string) {
 		},
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeAnthropicGuardrailBlocked mirrors writeGuardrailBlocked in the
+// Anthropic error envelope so SDK clients surface the refusal cleanly.
+func writeAnthropicGuardrailBlocked(w http.ResponseWriter, name, reason string) {
+	msg := "request blocked by guardrail " + name
+	if reason != "" {
+		msg += ": " + reason
+	}
+	writeAnthropicError(w, http.StatusForbidden, "permission_error", msg)
 }
 
 func recordGuardrailAudit(ctx context.Context, st store.Store, name, action, reason string) {

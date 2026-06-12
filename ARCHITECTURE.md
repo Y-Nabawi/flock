@@ -86,14 +86,14 @@ Deep-dive design for contributors and maintainers. For user-facing docs, see [RE
    │  node registry · model placements · usage · audit · web UI    │
    └───────────────────────────────────────────────────────────────┘
                               ▲
-                              │ mesh: LAN (v0.3) or
-                              │ embedded Tailscale (v0.4)
+                              │ mesh: LAN today
+                              │ (tsnet planned — not implemented)
 ```
 
 Two distinct planes:
 
 - **North-south** — clients → gateway → router → engine (local or remote). Data plane. Latency-sensitive. Per-request work; KV caches live in the chosen engine.
-- **East-west** — control plane ↔ agents. Cluster management. Lower volume. Direct HTTP today (NATS pub/sub was scoped for sharded events but is not in v0.3).
+- **East-west** — control plane ↔ agents. Cluster management. Lower volume. Direct HTTP: agents POST register/heartbeat to the leader's admin API, and the leader calls each worker's HTTP server directly. There is no message broker.
 
 A control-plane DB outage does **not** kill in-flight requests — the router keeps using its in-memory cache of node addresses + worker tokens. If a node disappears mid-stream, the next request will surface the routing error; the cache is rebuilt from the placements table once the DB is back.
 
@@ -117,7 +117,7 @@ The leader and worker share the same internal packages; the difference is which 
 
 1. `main()` parses subcommand + flags
 2. Loads config (`internal/config`)
-3. Initializes telemetry (`internal/tracing`, `internal/metrics`)
+3. Initializes telemetry (`internal/controlplane/tracing.go`, `internal/metrics`)
 4. Initializes mesh (`internal/mesh`)
 5. Initializes store (`internal/store`)
 6. Wires up subsystems based on mode
@@ -127,7 +127,7 @@ The leader and worker share the same internal packages; the difference is which 
 
 - Stop accepting new HTTP connections
 - Wait up to `drain_timeout_s` for in-flight requests
-- Detach from NATS
+- Stop background goroutines (heartbeat loop on workers, supervised engine processes, cache reaper)
 - Close mesh
 - Flush metrics, traces, logs
 - Close DB
@@ -301,7 +301,7 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
    ┌────────┐  ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌──────────┐
    │  API   │  │  Admin  │  │   Auth   │  │ Metrics │  │  Web UI  │
    │adapters│  │  API    │  │ (keys,   │  │         │  │ (embed)  │
-   │ OAI/   │  │         │  │  OIDC)   │  │         │  │          │
+   │ OAI/   │  │         │  │  HMAC)   │  │         │  │          │
    │ Anthr  │  │         │  │          │  │         │  │          │
    └───┬────┘  └────┬────┘  └──────────┘  └─────────┘  └──────────┘
        │            │
@@ -313,17 +313,21 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
             ▼
    ┌──────────────────────┐      ┌───────────────────┐
    │  Scheduler           │◄────►│  Node registry    │
-   │  (placement, drain)  │      │  (capabilities)   │
+   │  (sharding, GGUF)    │      │  (capabilities)   │
    └────────┬─────────────┘      └───────────────────┘
             │
             ▼
    ┌──────────────────────┐      ┌───────────────────┐
    │  Model registry      │◄────►│  Model puller     │
-   │  (catalog + state)   │      │  (HF, MinIO)      │
-   └──────────────────────┘      └───────────────────┘
+   │  (catalog + state)   │      │  (HF, Ollama,     │
+   └──────────────────────┘      │   local file)     │
+                                 └───────────────────┘
 
    All state above lives in SQLite via the `store` package.
-   All eventing (heartbeats, assignments) flows through NATS.
+   Eventing between leader and agents is direct HTTP (heartbeats POST to
+   the leader's admin API). `internal/events` is an in-process pub/sub
+   bus that fans state changes out to dashboard SSE clients — it never
+   leaves the leader process.
 ```
 
 ### Subsystem responsibilities
@@ -331,12 +335,12 @@ For models that don't fit on a single machine, `llama.cpp`'s `--rpc` mode lets t
 - **HTTP server** — request routing, TLS termination, middleware stack
 - **API adapters** — translate OpenAI/Anthropic requests to internal `InferenceRequest`; translate responses back
 - **Admin API** — node management, model management, token issuance, usage queries
-- **Auth** — API key validation, OIDC, token issuance
+- **Auth** — API key validation (scope-gated routes), token issuance, HMAC verification for worker traffic
 - **Router** — given a request, pick a target node + engine endpoint
-- **Scheduler** — model placement decisions, drain operations, replication
+- **Scheduler** — sharded-model orchestration, single-node `llama-server` bootstrap, GGUF download + distribution
 - **Node registry** — current cluster state, heartbeat tracking
 - **Model registry** — what models exist (catalog), where they live (placement), what state they're in
-- **Model puller** — download weights from HF/MinIO with resume
+- **Model puller** — download GGUFs from HuggingFace, delegate `ollama:` sources to the engine's own pull, use `file:` sources as-is
 
 ### CLI / Admin API / Web UI contract
 
@@ -403,20 +407,21 @@ As of 2026-06-05 the onboarding-and-sharing endpoints follow this pattern strict
         │       │        │         │
         ▼       ▼        ▼         ▼
    ┌────────┐┌────────┐┌────────┐┌──────────┐
-   │Heart-  ││Capa-   ││Engine  ││Model     │
-   │beat    ││bility  ││driver  ││puller    │
-   │loop    ││report  ││(start/ ││(HF →     │
-   │        ││        ││ stop/  ││ disk)    │
-   │        ││        ││ health)││          │
+   │Heart-  ││Capa-   ││Engine  ││Process   │
+   │beat    ││bility  ││driver  ││supervisor│
+   │loop    ││report  ││(health,││(rpc-srv, │
+   │        ││        ││ loaded ││ llama-   │
+   │        ││        ││ models)││ server)  │
    └────────┘└────────┘└────────┘└──────────┘
         │       │        │         │
         ▼       ▼        ▼         ▼
    ┌──────────────────────────────────────┐
-   │            NATS connection           │
+   │   HTTP to leader (register/heartbeat)│
+   │   + agent.Server (leader → worker)   │
    └──────────────────────────────────────┘
 ```
 
-The agent subscribes to `assignment.<node-id>` and reacts to messages like "load model X" or "drain". Heartbeats publish to `heartbeat.<node-id>` every 5s. Capability reports go on `capabilities.<node-id>` at startup and whenever hardware state changes.
+There is no message-bus subscription — everything is direct HTTP (`internal/agent/loop.go`). The agent POSTs to `/admin/v1/nodes/register` at startup (capabilities + address) and to `/admin/v1/nodes/heartbeat` every 5s, carrying the engine's `loaded_models`. On heartbeat failure it backs off exponentially (up to 1 minute), re-registers on 404, and exits on 401/403 (revoked token). Inbound work — proxied inference, process start/stop for sharding — arrives via the worker's own HTTP server (`agent.Server`).
 
 ### Capability detection
 
@@ -431,9 +436,13 @@ Output: a `Capabilities{}` struct with RAM, GPUs (model, VRAM), CPU cores, OS, a
 
 ## Mesh networking
 
-We embed Tailscale's `tsnet` library inside the binary so each Flock process is itself a tailnet node.
+Today Flock ships exactly one backend: **LAN** (`internal/mesh/mesh.go`). Each node reports a directly-routable `host:port` (the IP of its default outbound interface), and the leader talks to it over plain HTTP. This assumes a single trusted network — or Tailscale/WireGuard running at the host level, outside Flock.
 
-### Why tsnet
+The `Backend` interface (`Name()`, `Address(port)`, `Hostname()`, `Close()`) is the seam for future overlays.
+
+### tsnet (planned — not implemented)
+
+Embedding Tailscale's `tsnet` library so each Flock process is itself a tailnet node is on the roadmap. Why it's attractive:
 
 - NAT traversal works without firewall config
 - WireGuard noise protocol = mTLS-equivalent
@@ -442,20 +451,17 @@ We embed Tailscale's `tsnet` library inside the binary so each Flock process is 
 - Works across NATs, VPNs, Wi-Fi, LTE
 - One Go import
 
-### Boot sequence
+The planned boot sequence: the leader creates/reuses a tailnet and generates an auth key; `flock join` passes the key to `tsnet` and dials `leader.<tailnet>.ts.net`; tsnet exposes a `net.Listener` and `Dial(ctx, addr)` that everything sits on top of. None of this exists yet — `go.mod` has no tailscale dependency.
 
-1. On `flock up` (leader): create a tailnet (or reuse configured one), generate auth key, persist to store
-2. On `flock join`: receive auth key in token, pass to `tsnet`, dial `leader.<tailnet>.ts.net`
-3. tsnet exposes a `net.Listener` and `Dial(ctx, addr)` — everything sits on top
+### Alternative backends (planned — not implemented)
 
-### Alternative backends
+Other backends that could implement the same `internal/mesh` interface:
 
-Pluggable via `internal/mesh`:
-
-- `tailscale` — default, embedded tsnet
+- `tailscale` — embedded tsnet (see above)
 - `netbird` — for orgs already on NetBird
-- `lan` — pure local LAN, no overlay; mDNS for discovery
 - `headscale` — self-hosted Tailscale control server (for air-gapped)
+
+Only `lan` ships today; the backend is not yet configurable.
 
 ---
 
@@ -464,34 +470,33 @@ Pluggable via `internal/mesh`:
 ### SQLite (default)
 
 - File at `~/.flock/state.db`
-- WAL mode for concurrent reads with one writer
-- Goose / golang-migrate for schema migrations in `internal/store/migrations/`
-- sqlx for typed queries; no ORM
-- Schema lives in `internal/store/schema.sql`
+- WAL mode for concurrent reads with one writer (set via DSN pragma)
+- Driver: `modernc.org/sqlite` — pure Go, no CGO, so cross-compilation stays trivial
+- Plain `database/sql` with hand-written queries; no ORM, no sqlx
+- Schema is created in code: the DDL lives as a string in `internal/store/sqlite.go` and is applied at `OpenSQLite()` time, followed by idempotent inline column migrations (each checks `PRAGMA table_info` before `ALTER TABLE`) — there is no separate migrations directory
 
 ### Tables
 
 ```
-nodes          (id, tailnet_addr, hardware_json, state, last_heartbeat, …)
-models         (id, catalog_id, source, status, size_bytes, …)
-placements     (model_id, node_id, status, loaded_at)
-users          (id, email, oidc_sub, created_at)
-api_keys       (id, user_id, hash, scopes, quota, revoked, …)
-tokens         (id, kind, hash, expires_at, used_at)
-audit_log      (id, ts, user_id, action, target, metadata_json)
-usage          (id, ts, user_id, model, prompt_tokens, completion_tokens, …)
-metrics_cache  (key, value, updated_at)
+nodes               (id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state, …)
+models              (id, catalog_id, source, status, size_bytes, installed_at)
+model_placements    (node_id, model_id, status, last_seen)
+desired_placements  (node_id, model_id, priority, pinned, created_at)
+shards              (id, model_id, role, node_id, address, process_id, status, …)
+api_keys            (id, hash, name, scope, user_id, quota_daily_tokens, rpm_limit, tpm_limit, allowed_models, expires_at, revoked, …)
+usage               (id, ts, api_key_id, user_id, model, protocol, prompt_tokens, completion_tokens, latency_ms, outcome, cost_usd)
+budgets             (id, api_key_id, window, limit_unit, limit_value, current_value, reset_at, …)
+cache               (key, namespace, value, expires_at)
+audit_log           (id, ts, actor, action, target, metadata_json)
 ```
 
-### Postgres (for HA — v1.0)
+### Postgres (planned — not implemented)
 
-Same schema, swap the driver. `internal/store` exposes an interface; both backends implement it.
+Same schema, swap the driver. `internal/store` already exposes a `Store` interface that a `postgres.go` backend would implement; only the SQLite backend exists today.
 
 ### Model files
 
-Not in SQLite. Stored on each node's disk at `~/.flock/models/<sha256>/`. The model registry records which nodes have which file.
-
-For a MinIO mirror (optional): an admin can configure `storage.models_mirror` and the puller fetches from MinIO instead of HuggingFace.
+Not in SQLite. GGUFs downloaded for sharding land in `storage.models_dir` as `<models_dir>/<source.file>`; Ollama-sourced models live wherever Ollama keeps them. The placements table records which nodes can serve which model.
 
 ---
 
@@ -605,13 +610,15 @@ We intentionally do **not** support fallback by user, by request shape, or by ca
 
 ## Scheduler
 
-Runs on the leader. Watches the node registry and model registry. Goals:
+Runs on the leader. What ships today in `internal/scheduler` is the **sharding orchestrator** (`sharding.go`, described above), the single-node `llama-server` bootstrap (`llamacpp.go`), and GGUF download + distribution (`hf_download.go`, `gguf_distribute.go`). Workers install their own models via `flock model add`; the leader does not push placements.
+
+The general placement/drain/replication scheduler below is **planned — not implemented**. Goals:
 
 1. Every requested model is loaded on at least 1 node it fits on.
 2. Highly-used models get replicas to handle load.
 3. Drains complete without dropping requests.
 
-### Placement algorithm (v0.2)
+### Placement algorithm (planned — not implemented)
 
 ```
 for each requested model M, sorted by priority (size desc, requests desc):
@@ -622,10 +629,10 @@ for each requested model M, sorted by priority (size desc, requests desc):
   else:
     pick candidate with most free capacity (binpack=false)
     or least free capacity (binpack=true)
-    issue assignment via NATS
+    issue assignment to the worker over HTTP
 ```
 
-### Drain algorithm
+### Drain algorithm (planned — not implemented)
 
 ```
 mark node as draining (no new sessions routed to it)
@@ -636,7 +643,7 @@ wait drain_timeout_s for in-flight requests
 remove node from registry
 ```
 
-### Replication
+### Replication (planned — not implemented)
 
 - `auto` — start with 1 replica; scheduler adds replicas when sustained queue depth > threshold for >5 min
 - `always` — every model gets ≥2 replicas if hardware allows
@@ -658,11 +665,15 @@ type Engine interface {
     Pull(ctx context.Context, modelID string, onProgress func(status string, completed, total int64)) error
     Delete(ctx context.Context, modelID string) error
 
+    // Unload drops the model from memory without uninstalling weights.
+    // Engines that can't return ErrUnloadNotSupported.
+    Unload(ctx context.Context, modelID string) error
+
     Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
 }
 ```
 
-### Implemented (or planned for v0.2)
+### Implemented drivers
 
 - **Ollama** — easiest dev backend. Driver shells out to `ollama` CLI for pulls; talks to its HTTP API.
 - **vLLM** — for NVIDIA. Driver runs the official Docker image or local install with the right `--model`, `--tensor-parallel-size`, `--max-model-len` flags.
@@ -705,12 +716,12 @@ Loaded into the model registry at startup. Users add via `flock model add qwen3-
 
 ### Puller
 
-- Downloads files in parallel chunks
-- Resumes interrupted transfers
-- Verifies SHA256 of each file
-- Supports `hf:owner/repo`, `https://...`, `file:./local.gguf`, `s3://...`, `minio://...`
-- Caches to `~/.flock/models/<sha256>/`
-- Multi-node deployments can configure a MinIO mirror to avoid re-downloading per node
+Three source types (`internal/models/catalog.go`): `ollama`, `huggingface`, `file`. CLI shorthand: `hf:owner/repo[:file.gguf]`, `ollama:name[:tag]`, `file:/abs/path/x.gguf`. There is no `https://`, `s3://`, or `minio://` support.
+
+- `ollama` sources delegate to the engine's own pull (with progress callbacks)
+- `huggingface` sources (GGUFs for sharding) are a single streaming GET from `huggingface.co/<repo>/resolve/main/<file>` into `storage.models_dir`, written to a `.partial` file and renamed on success; skipped if already present (`internal/scheduler/hf_download.go`). Resume of interrupted transfers is planned — not implemented; today an interrupted download starts over.
+- `file` sources are used in place — Flock just verifies the path exists
+- Shard fan-out copies the leader's GGUF to workers via `/v1/process/file` + `/v1/process/upload`, sha256-verified and skipped when the worker already has the file
 
 ---
 
@@ -718,34 +729,35 @@ Loaded into the model registry at startup. Users add via `flock model add qwen3-
 
 ### API keys
 
-- Format: `sk-orc-` + 32 url-safe random bytes
-- Stored as bcrypt hashes
-- Scopes: `inference`, `admin`, `node` (join token)
-- Per-key quotas: daily token cap, monthly token cap
+- Format: `sk-orc-` + 24 random bytes, base64url-encoded (`internal/auth/keys.go`)
+- Stored as sha256 hashes — only the hex digest is persisted, never the plaintext
+- Scopes: `user`, `admin`, `node` — exactly one scope per key
+- Per-key controls: daily token quota, RPM/TPM rate limits, model allowlist, optional expiry (`--ttl` / `--expires-at`)
 - Revocable at any time
 
-### Token types
+### Key scopes
 
-| Kind | Purpose | TTL |
+| Scope | Purpose | TTL |
 |---|---|---|
-| `api` | User keys for `/v1/...` | until revoked |
-| `admin` | Cluster admin operations | until revoked |
-| `node` | One-shot join token | 5 minutes |
-| `invite` | OIDC invite for new user | 24 hours |
+| `user` | Inference keys for `/v1/...` | until revoked or expired |
+| `admin` | Cluster admin operations (`/admin/v1/...`) | until revoked or expired |
+| `node` | Worker join + register/heartbeat | until revoked or expired |
 
-### OIDC (web UI)
+`flock invite <name>` mints a `user`-scope key (optionally with a daily token quota) and renders paste-ready client snippets — there is no separate invite token kind.
 
-- Generic OIDC: provide issuer, client ID, client secret
-- Built-in: Google, GitHub, Okta presets
-- Session via signed cookie
-- First user becomes admin; subsequent users invited
+### Web UI auth
+
+The dashboard authenticates with an API key, same as any other client (header, or `?key=` query param for `EventSource`/SSE, which can't set headers). There is no OIDC, no SSO, and no login session — OIDC/RBAC were explicitly killed in ROADMAP.md as enterprise feature creep for a gateway on a trusted network.
+
+### Bootstrap and worker auth
+
+- **Admin key bootstrap**: the first `flock up` generates an `admin`-scope key, prints it once to the operator, and saves the plaintext to `~/.flock/admin.key` (mode 0600) so subsequent local CLI calls work without copy-paste.
+- **Worker auth**: leader ↔ worker requests are signed with HMAC-SHA256 over `v1\n<METHOD>\n<PATH>\n<ts>` keyed by the per-node worker token (`internal/auth/hmac.go`), with constant-time comparison and a ±5-minute replay window. Bearer fallback is accepted for one transition release.
 
 ### Authorization model
 
-- Roles: `admin`, `user`, `viewer`
-- Models can be scoped: `model.allowed_roles`
-- Per-user model whitelist (optional)
-- All admin actions go through `internal/auth/policy.go`
+- Scope checks via middleware (`auth.RequireScope` / `RequireScopeAny` in `internal/auth/keys.go`) — no role system
+- Per-key model allowlist (optional): requests for non-listed models get HTTP 403 `model_not_allowed`
 
 ---
 
@@ -753,7 +765,7 @@ Loaded into the model registry at startup. Users add via `flock model add qwen3-
 
 ### Metrics
 
-Declared in `internal/metrics/metrics.go`. Exposed at `:9090/metrics` (configurable).
+Declared in `internal/metrics/metrics.go`. Exposed at `/metrics` on the main listener (default `:8080`) — there is no separate metrics port. The endpoint is unauthenticated by design so Prometheus can scrape without a key.
 
 Key series:
 
@@ -774,7 +786,7 @@ Router subsystem (added in the observability pass):
 
 OpenTelemetry/OTLP-HTTP. Set `observability.otlp_endpoint` (or `FLOCK_OTLP_ENDPOINT`) to a collector URL — empty disables tracing with zero overhead (NoopTracerProvider).
 
-Span hierarchy as of v0.6:
+Span hierarchy today:
 
 ```
 http.request                                         (otelhttp on the chi router)
@@ -804,7 +816,7 @@ vLLM / MLX / llamacpp drivers all carry the same `<driver>.Chat` span shape via 
 
 ### Dashboards
 
-Importable Grafana JSON lives in [`dashboards/`](../dashboards/) — see [`dashboards/README.md`](../dashboards/README.md) for import steps and the underlying metric schema.
+Importable Grafana JSON lives in [`dashboards/`](dashboards/) — see [`dashboards/README.md`](dashboards/README.md) for import steps and the underlying metric schema.
 
 - `cluster-overview.json` — total RPS, p50/p95/p99 latency, error rate, tokens/s (prompt vs completion), nodes up, loaded models inventory
 - `per-model.json` — same questions filtered to one model (Grafana template variable picks the model)
@@ -818,14 +830,14 @@ All three bind to whichever Prometheus data source you pick at import time via t
 
 ### Network
 
-- Mesh = WireGuard via Tailscale. Inter-node traffic is encrypted + authenticated.
-- Gateway terminates TLS via embedded Caddy (Let's Encrypt) or user-provided certs.
-- No node needs an exposed firewall port.
+- Mesh = plain HTTP on a trusted LAN today. Inter-node requests are authenticated (HMAC-signed) but not encrypted by Flock — run Tailscale/WireGuard at the host level, or keep the fleet on one trusted network. Embedded tsnet (WireGuard in-process) is planned — not implemented.
+- The gateway serves plain HTTP; there is no built-in TLS termination. Put a reverse proxy (Caddy, nginx) in front if you expose it beyond the LAN.
+- Workers must be reachable from the leader on their reported `host:port`.
 
 ### Auth
 
 - Per-user API keys, revocable.
-- OIDC for the web UI.
+- The web UI authenticates with an API key (no OIDC — see § Authentication and authorization).
 - Admin keys are separate from user keys, never sent to workers.
 
 ### Data
@@ -838,16 +850,16 @@ All three bind to whichever Prometheus data source you pick at import time via t
 
 | Threat | Mitigation |
 |---|---|
-| Compromised worker reads other workers' state | Workers have no admin scope; mesh is point-to-point encrypted |
+| Compromised worker reads other workers' state | Workers have no admin scope; leader↔worker requests are HMAC-signed per node |
 | Leaked user key | One-click revoke; quota caps blast radius |
-| Mesh traffic sniffed on host network | WireGuard noise protocol |
+| Mesh traffic sniffed on host network | Out of scope today (trusted-LAN assumption) — run WireGuard/Tailscale at the host level; embedded tsnet is planned |
 | Compromised leader | Treat leader as trust root; rotate admin keys periodically |
 | Jailbroken local model | Optional gateway-level moderation hook |
 | Supply chain (downloaded weights) | SHA256 verification against catalog or HF |
 
 ### Reporting vulnerabilities
 
-`hadi.work.ca@gmail.com` (PGP key in `SECURITY.md`). 90-day disclosure.
+`hadi.work.ca@gmail.com`, or (preferred) a private GitHub Security Advisory — see `SECURITY.md`. 90-day disclosure.
 
 ---
 
@@ -856,12 +868,12 @@ All three bind to whichever Prometheus data source you pick at import time via t
 | Choice | Alternatives considered | Why we picked this |
 |---|---|---|
 | Go | Rust, Python | Single binary, fast enough, big ecosystem for networking |
-| `tsnet` for mesh | libp2p, raw WireGuard, custom | Solves NAT traversal + mTLS + discovery in one import; battle-tested |
-| SQLite (default) | Postgres, etcd | Embedded, file-backed, no operator; sufficient until ~1k nodes |
-| Embedded NATS | Redis pub/sub, gRPC streaming | Embeds in Go cleanly; pub/sub semantics fit "broadcast model state" |
+| LAN mesh (`tsnet` planned) | libp2p, raw WireGuard, custom | LAN + plain HTTP needs zero deps and works today; tsnet would add NAT traversal + mTLS + discovery in one import when it lands |
+| SQLite via `modernc.org/sqlite` (default) | Postgres, etcd, mattn/go-sqlite3 | Embedded, file-backed, no operator; pure Go (no CGO) keeps cross-compilation trivial |
+| Direct HTTP + in-process event bus | Embedded NATS, Redis pub/sub, gRPC streaming | Heartbeats are plain HTTP POSTs; dashboard SSE only needs a process-local pub/sub (`internal/events`) — no broker to embed or operate |
 | vLLM / MLX / llama.cpp | Build our own engine | Years of perf work; we'd never catch up |
 | Hand-written adapters | LiteLLM as a library | LiteLLM is Python; we want one binary. We use it as a reference. |
-| Next.js + embed.FS | SPA served separately | Embedded UI = one binary |
+| Single embedded HTML page (`go:embed`) | Next.js SPA, separate web server | Embedded UI = one binary, no Node toolchain in the build |
 | Chi router | gin, echo, stdlib | Minimal, idiomatic, well-typed |
 | Apache 2.0 | MIT, AGPL | Permissive enough for enterprise adoption; patent grant included |
 
@@ -869,7 +881,7 @@ All three bind to whichever Prometheus data source you pick at import time via t
 
 ## Concurrency model
 
-- The leader has a small fixed set of goroutines: HTTP server, NATS broker, scheduler tick, metrics scraper, drain workers (per drain operation).
+- The leader has a small fixed set of goroutines: HTTP server, cache reaper, desired-placement restore (startup), and per-process supervisor watchers (sharding). Workers add the heartbeat loop.
 - Each in-flight request spawns one goroutine in the gateway and one streaming connection to the worker.
 - Locks are scoped to single subsystems. There is no global lock.
 - All shared state is in SQLite (durable) or in-memory maps protected by per-key locks (caches).
@@ -892,6 +904,7 @@ flock/
 ├── QUICKSTART.md              # 3-min new user landing page
 ├── ARCHITECTURE.md            # this file
 ├── TASKS.md                   # implementation plan
+├── ROADMAP.md                 # scope decisions (incl. explicitly-killed features)
 ├── LICENSE                    # Apache 2.0
 ├── SECURITY.md
 ├── CODE_OF_CONDUCT.md
@@ -916,12 +929,17 @@ flock/
 │   ├── agent/                 # capability detect + heartbeat loop + worker HTTP + process supervisor
 │   ├── api/                   # openai.go + anthropic.go + egress.go + usage.go
 │   ├── router/                # model → node dispatch, least-loaded, shard coordinator
-│   ├── scheduler/             # sharding.go — orchestrator for sharded model lifecycle
+│   ├── scheduler/             # sharding orchestrator + llama-server bootstrap + GGUF download/distribute
 │   ├── mesh/                  # mesh.go — LAN backend (tsnet planned)
 │   ├── engines/               # types + ollama/vllm/mlx/llamacpp_rpc drivers + registry
 │   ├── models/                # catalog parser (incl. ShardingSpec), auto-pick
 │   ├── store/                 # SQLite backend (api_keys / models / nodes / placements / shards / usage / audit)
-│   ├── auth/                  # API keys + scope middleware
+│   ├── auth/                  # API keys (sha256) + scope middleware + HMAC worker auth
+│   ├── control/               # mutating ops shared by CLI + admin API
+│   ├── events/                # in-process pub/sub bus for dashboard SSE
+│   ├── cache/                 # response cache (memory + SQLite drivers)
+│   ├── lifecycle/             # local-engine memory lifecycle (load/evict/pin)
+│   ├── callbacks/, guardrails/ # observability event sinks + content-check hooks
 │   ├── config/                # YAML + env loader
 │   ├── metrics/               # Prometheus declarations
 │   └── ui/                    # embed.go + index.html (single embedded page)
@@ -930,7 +948,8 @@ flock/
 │   ├── llama-3.2-1b.yaml
 │   ├── llama-3.2-3b.yaml
 │   ├── llama-3.3-70b-sharded.yaml
-│   └── qwen2.5-coder-{7b,14b,32b}.yaml
+│   ├── qwen-coder-{7b,14b,32b}.yaml
+│   └── … (35+ entries — see catalog/README.md)
 │
 └── installer/
     ├── install.sh             # the curl | sh script
@@ -952,10 +971,10 @@ flock/
 
 ## Coding conventions
 
-- **Go**: stdlib first, then well-vetted deps (chi, sqlx, nats.go, tsnet, otelgo). No frameworks.
+- **Go**: stdlib first, then well-vetted deps (chi, modernc.org/sqlite, prometheus/client_golang, OpenTelemetry, aws-sdk-go-v2 for Bedrock). No frameworks.
 - **Error handling**: wrap with `fmt.Errorf("operation: %w", err)`. Never swallow.
 - **Logging**: `slog` only. Levels: debug (verbose), info (user-relevant), warn (degraded), error (request failed).
-- **Tests**: table-driven where it fits. No mocks for stdlib. Use real SQLite, real NATS (in-process).
+- **Tests**: table-driven where it fits. No mocks for stdlib. Use real SQLite (in-memory or temp file) and `httptest.Server` for HTTP.
 - **HTTP**: handlers are thin; logic lives in services. Handlers do parse → call → respond.
 - **Concurrency**: prefer channels at boundaries; use mutexes for small protected state.
 - **No `init()` functions** except for package-level registry registration.
@@ -965,11 +984,12 @@ flock/
 
 ### UI conventions
 
-- TypeScript strict mode
-- shadcn/ui components, Tailwind for styles
-- No client-side state library (Zustand only if a screen genuinely needs it)
-- Data fetching via `swr`; mutations via `fetch`
-- Pages are React Server Components by default
+The dashboard is one embedded HTML file — `internal/ui/index.html`, compiled in via `//go:embed` (`internal/ui/embed.go`). No build step, no Node toolchain.
+
+- Vanilla JavaScript, inline at the bottom of the file
+- Tailwind via CDN for styles
+- Data fetching via `fetch` against the admin API; live updates via `EventSource` on `/admin/v1/events` (SSE), with polling as the fallback
+- New UI capability = edit `index.html` directly; the backing logic must already exist in `internal/control/` (CLI-first rule)
 
 ---
 
@@ -1010,7 +1030,7 @@ Tag-driven via GoReleaser:
 
 ```bash
 git tag v0.x.y
-git push --tags        # CI builds binaries + UI, signs, publishes to GH Releases + Homebrew tap
+git push --tags        # CI builds binaries (UI is embedded), publishes checksums + tarballs to GH Releases
 ```
 
 ---
@@ -1067,7 +1087,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 8. `internal/router/router.go` — picks the backing engine per request (local → remote → fallback)
 9. `internal/scheduler/sharding.go` — orchestrates sharded models (rpc-server + coordinator)
 10. `internal/engines/types.go` — `Engine` interface; `internal/engines/{ollama,vllm,mlx,llamacpp_rpc}.go` are the drivers
-11. `internal/agent/agent.go` — worker heartbeat loop; `internal/agent/server.go` is the worker HTTP server
+11. `internal/agent/loop.go` — worker register + heartbeat loop; `internal/agent/server.go` is the worker HTTP server
 12. `internal/store/sqlite.go` — schema, migrations, query helpers
 13. `internal/ui/index.html` (embedded via `//go:embed` in `internal/ui/embed.go`) — admin dashboard, single HTML + Tailwind via CDN
 
@@ -1082,7 +1102,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 | Add a new admin HTTP endpoint | `internal/controlplane/admin_<name>.go` — must delegate to `internal/control/` |
 | Add a UI page or tab | edit `internal/ui/index.html` directly; the JS is inline at the bottom |
 | Add a metric | declare in `internal/metrics/metrics.go`, increment at the relevant call site |
-| Add a config field | extend the `Config` struct in `internal/config/config.go`, add a default in `Default()`, optionally read an env var in `applyEnv()`, document in [README.md → Full reference](../README.md#full-reference) |
+| Add a config field | extend the `Config` struct in `internal/config/config.go`, add a default in `Default()`, optionally read an env var in `applyEnv()`, document in [README.md → Full reference](README.md#full-reference) |
 
 ### Submitting a PR
 
@@ -1110,7 +1130,7 @@ Start with these files in order. Each top-of-file comment explains what the pack
 2. Implement the `Engine` interface (`internal/engines/types.go`) in `internal/engines/<name>.go`. The interface today: `Name()`, `Endpoint()`, `Health(ctx)`, `Chat(ctx, req)`, `Embed(ctx, req)` (optional), `LoadedModels(ctx)`.
 3. Register the driver in `internal/engines/registry.go` — declare what hardware kinds it supports so the agent can pick it automatically.
 4. Add a unit test against a fake HTTP server (`httptest.NewServer`) — don't require a real GPU in CI.
-5. Document any required system binaries in [README.md → Installation](../README.md#installation) and add a "What ships" bullet in [README.md → What's shipped](../README.md#whats-shipped).
+5. Document any required system binaries in [README.md → Installation](README.md#installation) and add a "What ships" bullet in [README.md → What's shipped](README.md#whats-shipped).
 
 ### Add a new client protocol
 
@@ -1119,7 +1139,7 @@ E.g. supporting Cohere's API:
 1. Read `internal/api/openai.go` as the simplest example.
 2. Create `internal/api/cohere.go` with handlers that translate Cohere's request shape into `engines.ChatRequest` (the internal canonical form) and back.
 3. Wire the routes in `internal/controlplane/server.go` (look for `r.Post("/v1/chat/completions", …)` and follow the pattern).
-4. Document in [README.md → Supported clients](../README.md#supported-clients) and in [README.md → API reference](../README.md#api-reference).
+4. Document in [README.md → Supported clients](README.md#supported-clients) and in [README.md → API reference](README.md#api-reference).
 
 ### Add a new mesh backend
 
@@ -1128,14 +1148,14 @@ E.g. swapping LAN for Tailscale tsnet:
 1. Read `internal/mesh/mesh.go` — the `Backend` interface and the existing LAN implementation.
 2. Create `internal/mesh/tailscale.go` (or similar) implementing the `Backend` interface.
 3. Surface a `mesh.backend` field in `internal/config/config.go` and switch on it in the controlplane bootstrap.
-4. Note the v0.4 "Not yet configurable" disclaimer in the README will need updating.
+4. Note the "Not yet configurable" disclaimer in the README will need updating.
 
 ### Add a new storage backend
 
 1. Read `internal/store/sqlite.go` for the table layout and the `Store` interface.
 2. Create `internal/store/<name>.go` implementing the same interface (e.g. `postgres.go` for HA).
-3. Add a migration runner for the new backend.
-4. Switch on `storage.type` in `internal/store/open.go`.
+3. Add a migration runner for the new backend (SQLite uses inline, idempotent column migrations applied at open time).
+4. Add a `storage.type` switch where the store is opened (today `store.OpenSQLite` is called directly).
 
 ### Add a new model to the catalog
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/config"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
 	"github.com/hadihonarvar/flock/internal/store"
@@ -25,7 +26,7 @@ func cmdModel(args []string) {
 	help := helpSpec{
 		name:    "model",
 		summary: "install, list, search, inspect, load/unload, or uninstall LLM models",
-		usage:   "flock model <add <id> [--force] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] | unload <id> | remove <id>>",
+		usage:   "flock model <add <id> [--force] | ls | ps | search [query] | info <id> | load <id> [--swap] [--pin] [--priority N] | unload <id> | remove <id>>",
 		examples: []string{
 			"flock model search                # browse the full catalog",
 			"flock model search coder          # filter to coding models",
@@ -149,12 +150,20 @@ func cmdModel(args []string) {
 		rest := args[1:]
 		id := ""
 		var loadArgs []string
-		for _, a := range rest {
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
 			if !strings.HasPrefix(a, "-") && id == "" {
 				id = a
 				continue
 			}
 			loadArgs = append(loadArgs, a)
+			// --priority takes a value: keep the next token attached to
+			// the flag so `model load --priority 3 qwen3-14b` doesn't
+			// mistake "3" for the positional model id.
+			if (a == "--priority" || a == "-priority") && i+1 < len(rest) {
+				loadArgs = append(loadArgs, rest[i+1])
+				i++
+			}
 		}
 		if id == "" || !installedHasID(id) {
 			id = pickInstalledID("Pick an installed model to load:", id)
@@ -244,12 +253,13 @@ func modelLoad(id string, args []string) {
 		case "--swap", "-swap":
 			swap = true
 		case "--priority", "-priority":
-			if i+1 < len(args) {
-				if n, err := strconv.Atoi(args[i+1]); err == nil {
-					priority = n
-				}
-				i++
+			if i+1 >= len(args) {
+				die("--priority requires a value (usage: flock model load <id> [--swap] [--pin] [--priority N])")
 			}
+			if n, err := strconv.Atoi(args[i+1]); err == nil {
+				priority = n
+			}
+			i++
 		default:
 			if strings.HasPrefix(args[i], "--priority=") {
 				if n, err := strconv.Atoi(strings.TrimPrefix(args[i], "--priority=")); err == nil {
@@ -488,10 +498,11 @@ func parseModelAddArgs(args []string) (id string, force bool, dryRun bool, fromP
 			dryRun = true
 			continue
 		case "--from", "-from":
-			if i+1 < len(args) {
-				fromPath = args[i+1]
-				i++
+			if i+1 >= len(args) {
+				die("--from requires a path to a catalog YAML (usage: flock model add --from ./my-model.yaml)")
 			}
+			fromPath = args[i+1]
+			i++
 			continue
 		}
 		if strings.HasPrefix(a, "--from=") {
@@ -522,10 +533,14 @@ func modelAddDryRun(id string) {
 	if entry == nil {
 		die("no catalog entry for %q (try `flock model search`)", id)
 	}
-	bold, dim, reset := "\033[1m", "\033[2m", "\033[0m"
-	if os.Getenv("NO_COLOR") != "" {
-		bold, dim, reset = "", "", ""
-	}
+	modelAddDryRunEntry(cfg, entry)
+}
+
+// modelAddDryRunEntry renders the plan for an already-resolved entry.
+// Split out so `model add --from x.yaml --dry-run` can plan against the
+// parsed YAML without persisting anything first.
+func modelAddDryRunEntry(cfg *config.Config, entry *models.Entry) {
+	bold, dim, reset := ansiCodes()
 	fmt.Printf("%sDry-run plan for %s%s%s\n", bold, entry.ID, reset, "")
 	fmt.Printf("  %sName%s          %s\n", bold, reset, entry.DisplayName)
 	if entry.SizeBytes > 0 {
@@ -682,22 +697,28 @@ func modelAddEntry(entry *models.Entry, force bool) {
 	if err != nil {
 		die("pull failed: %v", err)
 	}
-	_ = st.Models().Upsert(context.Background(), store.Model{
+	if err := st.Models().Upsert(context.Background(), store.Model{
 		ID:          entry.ID,
 		CatalogID:   entry.ID,
 		Source:      eng.Name() + ":" + engineName,
 		Status:      "ready",
 		SizeBytes:   entry.SizeBytes,
 		InstalledAt: time.Now(),
-	})
+	}); err != nil {
+		warn(os.Stdout, "the weights for %s are installed, but recording the install in the local registry failed: %v", entry.ID, err)
+		die("rerun `flock model add %s` once the store is healthy to register it", entry.ID)
+	}
 	// Mark this node's placement so the router can find it. On a worker
 	// this row will be reconciled by the leader on the next heartbeat too.
-	_ = st.Placements().Upsert(context.Background(), store.Placement{
+	if err := st.Placements().Upsert(context.Background(), store.Placement{
 		NodeID:   "local",
 		ModelID:  engineName,
 		Status:   "ready",
 		LastSeen: time.Now(),
-	})
+	}); err != nil {
+		warn(os.Stdout, "the weights for %s are installed, but recording its placement (so the router can find it) failed: %v", entry.ID, err)
+		die("rerun `flock model add %s` once the store is healthy to register it", entry.ID)
+	}
 	ok(os.Stdout, "installed: %s", entry.ID)
 }
 
@@ -724,6 +745,15 @@ func modelAddFromYAML(path string, force, dryRun bool) {
 	}
 
 	cfg := loadConfigOrExit()
+
+	// Dry run plans against the parsed YAML and stops BEFORE the
+	// copy-to-user-catalog write below — "no weights pulled" must also
+	// mean "nothing persisted".
+	if dryRun {
+		modelAddDryRunEntry(cfg, &entry)
+		return
+	}
+
 	// Persist into ~/.flock/catalog/ so this entry is visible to future
 	// `flock model search/info/ls` runs. We use UserCatalogDir() to honor
 	// FLOCK_CATALOG_DIR when set; otherwise default to ~/.flock/catalog.
@@ -734,10 +764,6 @@ func modelAddFromYAML(path string, force, dryRun bool) {
 		note(os.Stdout, "saved %s to %s — visible to `flock model search` / `info` next run", entry.ID, dest)
 	}
 
-	if dryRun {
-		modelAddDryRun(entry.ID)
-		return
-	}
 	modelAddEntry(&entry, force)
 }
 
@@ -1084,12 +1110,7 @@ func modelInfo(id string, asJSON bool) {
 		installedRow, _ = st.Models().Get(context.Background(), id)
 	}
 
-	bold := "\033[1m"
-	dim := "\033[2m"
-	reset := "\033[0m"
-	if os.Getenv("NO_COLOR") != "" {
-		bold, dim, reset = "", "", ""
-	}
+	bold, dim, reset := ansiCodes()
 
 	fmt.Printf("%s%s%s — %s\n", bold, entry.ID, reset, entry.DisplayName)
 	fmt.Println()

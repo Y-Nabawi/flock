@@ -39,8 +39,8 @@ These are the gaps between marketing copy and what the binary actually does toda
 - **Anthropic extended thinking** — `/v1/messages` accepts text + tool_use blocks; `thinking` blocks not yet supported. (tracked as M4-T12)
 - **Anthropic computer use** — `computer_20241022` / `bash_20241022` / `text_editor_20241022` tool types not yet handled. (tracked as M4-T13)
 - **Vision on Anthropic adapter** — image content blocks on `/v1/messages` not yet wired (OpenAI shape works via the Ollama path; Anthropic shape pending).
-- **Whisper transcription** — `/v1/audio/transcriptions` not shipped. (tracked as M4-T04)
-- **Rerank** — `/v1/rerank` deferred to v0.6 (needs cross-encoder backend; see ROADMAP).
+- ~~**Whisper transcription**~~ — ✅ shipped. `/v1/audio/transcriptions` (and `/v1/audio/speech`) proxy to optional Whisper / Piper-compatible endpoints (`engine.whisper_endpoint` / `engine.piper_endpoint`, or `FLOCK_WHISPER_ENDPOINT` / `FLOCK_PIPER_ENDPOINT`); HTTP 501 with a setup hint when unconfigured. (was M4-T04)
+- ~~**Rerank**~~ — ✅ shipped. `/v1/rerank` passes through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response. (see ROADMAP)
 
 **Security / auth**
 

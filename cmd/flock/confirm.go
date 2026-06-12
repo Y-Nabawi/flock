@@ -61,12 +61,14 @@ func extractJSONFlag(args []string) ([]string, bool) {
 	return out, asJSON
 }
 
-// emitJSON prints v as indented JSON to stdout, then exits the function.
-// Used by read commands when --json is set.
+// emitJSON prints v as indented JSON to stdout. Used by read commands
+// when --json is set. Encoding failure is fatal (exit 1): --json is the
+// scripting path, and a truncated/empty document must not look like
+// success to the consumer.
 func emitJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
-		fmt.Fprintln(os.Stderr, "encode json:", err)
+		die("encode json: %v", err)
 	}
 }

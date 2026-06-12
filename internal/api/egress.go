@@ -468,7 +468,15 @@ func peekVendorModel(body []byte) string {
 
 func recordEgress(ctx context.Context, st store.Store, vendor, model string, start time.Time, outcome string) {
 	dur := time.Since(start)
-	metrics.ObserveRequest(model, vendor, outcome, dur, 0, 0)
+	// Bound Prometheus label cardinality: a failed egress call may carry
+	// an arbitrary client-supplied model string — label those "unknown".
+	// Successful vendor calls keep the vendor model label, and the usage
+	// + audit rows below keep the raw string for debugging either way.
+	metricsModel := model
+	if outcome != "ok" {
+		metricsModel = "unknown"
+	}
+	metrics.ObserveRequest(metricsModel, vendor, outcome, dur, 0, 0)
 	key := auth.KeyFrom(ctx)
 	keyID, userID := "", ""
 	if key != nil {

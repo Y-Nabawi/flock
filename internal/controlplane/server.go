@@ -384,6 +384,10 @@ func (s *Server) routes() http.Handler {
 	// accessLog middleware can still record the 500.
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	// Stash the kernel-reported peer address BEFORE RealIP rewrites
+	// RemoteAddr from forwarding headers — bootstrapAdminKey must check
+	// loopback against the real TCP peer, not a spoofable header.
+	r.Use(stashRemoteAddr)
 	r.Use(middleware.RealIP)
 	r.Use(s.accessLog)
 
@@ -412,11 +416,10 @@ func (s *Server) routes() http.Handler {
 
 	// OpenAI-compatible + Anthropic-compatible (auth + quota)
 	r.Route("/v1", func(r chi.Router) {
+		// Cap request bodies first so nothing downstream (rate-limit
+		// estimation, the dispatch handlers) buffers an unbounded body.
+		r.Use(s.limitRequestBody)
 		r.Use(auth.Middleware(s.store.APIKeys(), s.cfg.Auth.RequireKeys))
-		// Stamp a request id + standard rate-limit headers on every
-		// response so client SDKs see throttling status without
-		// special-casing Flock. Runs after auth so the key is known.
-		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
 		// Per-key model allowlist runs BEFORE quota: a key with no quota
 		// to spend on an unauthorized model would otherwise burn a 429
 		// instead of the more accurate 403.
@@ -425,6 +428,12 @@ func (s *Server) routes() http.Handler {
 		// runaway client gets the more-actionable 429 with Retry-After
 		// instead of the daily 429.
 		r.Use(api.RateLimitMiddleware(s.rateBuckets))
+		// Stamp a request id + standard rate-limit headers on every
+		// response so client SDKs see throttling status without
+		// special-casing Flock. Runs after RateLimitMiddleware so the
+		// remaining-* values include this request's deduction (the
+		// contract documented on ResponseHeadersMiddleware).
+		r.Use(api.ResponseHeadersMiddleware(s.rateBuckets))
 		// Monthly + dollar budgets — refuse if any budget for this
 		// key is at or above its limit. Runs before the legacy
 		// daily-quota check (which is now a single-budget special
@@ -529,6 +538,51 @@ func (s *Server) routes() http.Handler {
 	return r
 }
 
+// realRemoteAddrKey carries the pre-RealIP RemoteAddr on the request
+// context. Unexported struct type — no collision with other packages.
+type realRemoteAddrKey struct{}
+
+// stashRemoteAddr records the kernel-reported peer address before
+// middleware.RealIP rewrites RemoteAddr from True-Client-IP /
+// X-Real-IP / X-Forwarded-For. Loopback-gated handlers must trust only
+// this value.
+func stashRemoteAddr(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), realRemoteAddrKey{}, r.RemoteAddr)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// realRemoteAddr returns the TCP peer address stashed by
+// stashRemoteAddr, falling back to r.RemoteAddr when the middleware
+// didn't run (e.g. handlers exercised directly in tests).
+func realRemoteAddr(r *http.Request) string {
+	if v, ok := r.Context().Value(realRemoteAddrKey{}).(string); ok && v != "" {
+		return v
+	}
+	return r.RemoteAddr
+}
+
+// defaultMaxBodyBytes caps /v1/* request bodies at 32 MiB — generous
+// for chat/embedding payloads (vision requests inline base64 images)
+// while keeping a single request from buffering unbounded memory.
+// Override via `max_body_bytes` in config.yaml / FLOCK_MAX_BODY_BYTES.
+const defaultMaxBodyBytes = 32 << 20
+
+// limitRequestBody wraps every /v1 request body in http.MaxBytesReader
+// so downstream io.ReadAll calls fail fast at the cap instead of
+// buffering whatever a client streams at us.
+func (s *Server) limitRequestBody(next http.Handler) http.Handler {
+	limit := s.cfg.MaxBodyBytes
+	if limit <= 0 {
+		limit = defaultMaxBodyBytes
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
+}
+
 // dispatchOpenAIChat inspects the request body's "model" field. If it names
 // a vendor model (claude-*, gpt-*) AND fallback is configured, the request is
 // proxied to the vendor; otherwise it goes to the local engine.
@@ -536,7 +590,7 @@ func (s *Server) dispatchOpenAIChat(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		writeBodyReadError(w, err)
 		return
 	}
 	model := peekModel(body)
@@ -586,7 +640,7 @@ func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Reques
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
 	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		writeBodyReadError(w, err)
 		return
 	}
 	model := peekModel(body)
@@ -608,6 +662,18 @@ func (s *Server) dispatchAnthropicMessages(w http.ResponseWriter, r *http.Reques
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	s.anthropicH.Messages(w, r)
+}
+
+// writeBodyReadError maps a request-body read failure to the matching
+// JSON error: 413 when the limitRequestBody cap tripped, 400 otherwise.
+func writeBodyReadError(w http.ResponseWriter, err error) {
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		writeJSONError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("request body exceeds the %d-byte limit", mbe.Limit))
+		return
+	}
+	writeJSONError(w, http.StatusBadRequest, "read body: "+err.Error())
 }
 
 func peekModel(body []byte) string {
@@ -708,6 +774,29 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
+	// First-use binding: the key that first registers a node id owns it.
+	// A node-scope key presenting a different id is refused, so one
+	// leaked node token can't impersonate every node. Admin keys always
+	// pass; legacy rows (no binding) bind on this register.
+	key := auth.KeyFrom(r.Context())
+	existing, err := s.store.Nodes().Get(r.Context(), req.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	boundKeyID := ""
+	if key != nil {
+		boundKeyID = key.ID
+	}
+	if existing != nil && existing.BoundKeyID != "" {
+		if auth.ScopeFrom(r.Context()) != "admin" && (key == nil || key.ID != existing.BoundKeyID) {
+			writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+			return
+		}
+		// Keep the original binding — an admin re-register shouldn't
+		// silently re-own the node.
+		boundKeyID = existing.BoundKeyID
+	}
 	// The presented bearer token doubles as the shared secret for both
 	// directions of communication. Store it on the node row so the router
 	// can authenticate outbound calls to the worker.
@@ -723,6 +812,7 @@ func (s *Server) registerNode(w http.ResponseWriter, r *http.Request) {
 		RAMGB:         req.RAMGB,
 		Address:       req.Address,
 		WorkerToken:   workerToken,
+		BoundKeyID:    boundKeyID,
 		HardwareJSON:  req.HardwareJSON,
 		LastHeartbeat: time.Now(),
 		State:         "ready",
@@ -752,6 +842,14 @@ func (s *Server) heartbeatNode(w http.ResponseWriter, r *http.Request) {
 	if n == nil {
 		writeJSONError(w, http.StatusNotFound, "unknown node — register first")
 		return
+	}
+	// Enforce the register-time key binding. Admin keys always pass;
+	// unbound legacy rows pass too (they bind on their next register).
+	if n.BoundKeyID != "" && auth.ScopeFrom(r.Context()) != "admin" {
+		if key := auth.KeyFrom(r.Context()); key == nil || key.ID != n.BoundKeyID {
+			writeJSONError(w, http.StatusForbidden, "node "+req.ID+" is bound to a different key")
+			return
+		}
 	}
 	n.LastHeartbeat = time.Now()
 	if n.State == "joining" {
@@ -814,6 +912,9 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.Placements().Delete(r.Context(), p.NodeID, p.ModelID)
 		}
 	}
+	// Drop the router's cached remote engine for this node so in-flight
+	// routing stops picking the removed worker immediately.
+	s.router.InvalidateNode(id)
 	s.bus.Publish(events.Event{Topic: events.TopicNodes, ID: id})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed", "id": id})
 }
@@ -1397,6 +1498,22 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Egress        map[string]any    `json:"egress"`
 		EditHint      string            `json:"edit_hint"`
 	}
+	// Sanitized copies of the callback / guardrail rows — the structs
+	// carry webhook signing secrets and Langfuse keys that must get the
+	// same redaction as the engine/vendor keys below. Copies, not
+	// in-place edits: s.cfg stays untouched.
+	cbs := make([]config.CallbackConfig, len(s.cfg.Observability.Callbacks))
+	for i, cb := range s.cfg.Observability.Callbacks {
+		cb.Secret = redact(cb.Secret)
+		cb.PublicKey = redact(cb.PublicKey)
+		cb.SecretKey = redact(cb.SecretKey)
+		cbs[i] = cb
+	}
+	grs := make([]config.GuardrailConfig, len(s.cfg.Observability.Guardrails))
+	for i, g := range s.cfg.Observability.Guardrails {
+		g.AuthKey = redact(g.AuthKey)
+		grs[i] = g
+	}
 	v := view{
 		Listen:      s.cfg.Listen,
 		ExternalURL: s.cfg.ExternalURL,
@@ -1434,8 +1551,8 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		Observability: map[string]any{
 			"otlp_endpoint":  s.cfg.Observability.OTLPEndpoint,
 			"otlp_status":    otlpStatus(s.cfg.Observability.OTLPEndpoint),
-			"callbacks":      s.cfg.Observability.Callbacks,  // names + kinds; secrets are env-expanded server-side
-			"guardrails":     s.cfg.Observability.Guardrails, // mode + url; auth_key is the literal config string, may be ${ENV} unexpanded
+			"callbacks":      cbs, // names + kinds; secret / langfuse keys redacted
+			"guardrails":     grs, // mode + url; auth_key redacted
 			"response_cache": s.cfg.Observability.ResponseCache,
 		},
 		Egress: map[string]any{
@@ -1894,14 +2011,11 @@ func (s *Server) cacheFlush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if all {
-		// "all" is implemented as deleting the empty-string namespace
-		// — every key in the memory driver ends up in some namespace
-		// folder (empty namespace = no prefix), and the SQLite driver's
-		// DeleteNamespace("") matches all rows with no explicit ns. For
-		// the bullet-proof case we walk both possibilities.
-		c.DeleteNamespace(r.Context(), "")
-	}
-	if ns != "" {
+		// Nuclear option: drop every entry regardless of namespace —
+		// the memory driver resets its whole LRU, the SQLite driver
+		// truncates the cache table.
+		c.DeleteAll(r.Context())
+	} else {
 		c.DeleteNamespace(r.Context(), ns)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "flushed", "namespace": ns, "all": all})
@@ -1963,7 +2077,11 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			actor = k.Name
 		}
 		action := r.Method + " " + r.URL.Path
-		_ = s.store.Audit().Record(r.Context(), store.AuditEntry{
+		// The request context is already canceled here for SSE streams
+		// and client-aborted requests — detach from cancellation (but
+		// keep the values) so those audit rows aren't silently dropped.
+		ctx := context.WithoutCancel(r.Context())
+		_ = s.store.Audit().Record(ctx, store.AuditEntry{
 			TS: time.Now(), Actor: actor,
 			Action: action,
 			Target: r.RemoteAddr,
@@ -1972,7 +2090,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		// shape as the audit_log row so a receiver doesn't need to
 		// keep a separate schema.
 		if s.callbacks != nil {
-			s.callbacks.Publish(r.Context(), callbacks.Event{
+			s.callbacks.Publish(ctx, callbacks.Event{
 				Kind: "audit",
 				Payload: map[string]any{
 					"actor":      actor,
@@ -1991,18 +2109,23 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 // `routes()` for the security model.
 func (s *Server) bootstrapAdminKey(w http.ResponseWriter, r *http.Request) {
 	// Reject any request that has been proxied — RealIP middleware
-	// (above) rewrites RemoteAddr from these headers, so without this
-	// guard a remote attacker behind a misconfigured reverse proxy
-	// could pose as loopback.
-	for _, h := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
+	// rewrites RemoteAddr from these headers (True-Client-IP takes
+	// precedence in chi v5), so without this guard a remote attacker
+	// behind a misconfigured reverse proxy could pose as loopback.
+	for _, h := range []string{"True-Client-IP", "X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
 		if r.Header.Get(h) != "" {
 			http.NotFound(w, r)
 			return
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	// Belt and braces: check loopback against the pre-RealIP peer
+	// address stashed by stashRemoteAddr, never the rewritten
+	// r.RemoteAddr — header spoofing then can't matter even if the
+	// guard list above falls behind RealIP's header set.
+	addr := realRemoteAddr(r)
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		host = r.RemoteAddr
+		host = addr
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {

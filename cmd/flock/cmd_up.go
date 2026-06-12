@@ -37,28 +37,28 @@ func cmdUp(args []string) {
 		"on Ctrl-C, ask the engine to drop loaded models from RAM (FLOCK_UNLOAD_ON_EXIT=1 sets the default)")
 	exclusive := fs.Bool("exclusive", false,
 		"one resident model per machine: loading a model evicts every other non-pinned model first (FLOCK_EXCLUSIVE=1 or placement.exclusive in config also set this)")
-	fs.Usage = func() {
-		showHelp(helpSpec{
-			name:    "up",
-			summary: "start the local node (becomes the cluster leader on first run)",
-			usage:   "flock up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive]",
-			flags:   fs,
-			examples: []string{
-				"flock up",
-				"FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up",
-				"FLOCK_ENGINE=llamacpp flock up           # auto-spawns llama-server if not already running",
-				"flock up --config ~/.flock/staging.yaml",
-				"flock up --auto-pull=false              # don't pre-pull the default model",
-				"flock up --no-wizard                    # skip the interactive 'install a starter?' prompt",
-			},
-			notes: []string{
-				"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
-				"When engine.preferred=llamacpp and no llama-server is listening on engine.llamacpp_endpoint, Flock auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
-			},
-		})
+	help := helpSpec{
+		name:    "up",
+		summary: "start the local node (becomes the cluster leader on first run)",
+		usage:   "flock up [--config <path>] [--auto-pull=false] [--no-wizard] [--exclusive]",
+		flags:   fs,
+		examples: []string{
+			"flock up",
+			"FLOCK_DEFAULT_MODEL=llama-3.2-1b flock up",
+			"FLOCK_ENGINE=llamacpp flock up           # auto-spawns llama-server if not already running",
+			"flock up --config ~/.flock/staging.yaml",
+			"flock up --auto-pull=false              # don't pre-pull the default model",
+			"flock up --no-wizard                    # skip the interactive 'install a starter?' prompt",
+		},
+		notes: []string{
+			"On first run, prints an admin API key — save it. Subsequent runs reuse the saved key.",
+			"When engine.preferred=llamacpp and no llama-server is listening on engine.llamacpp_endpoint, Flock auto-launches `llama-server -hf <repo>` for the default model (if its catalog entry has source.repo set) and stops it again on shutdown.",
+		},
 	}
+	// Bad flags: print usage to stderr and let ExitOnError exit 2.
+	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
-		fs.Usage()
+		showHelp(help)
 	}
 	_ = fs.Parse(args)
 
@@ -520,10 +520,7 @@ func firstRunWizard(cfg *config.Config, cat []models.Entry, st store.Store, eng 
 	if pick == nil {
 		return false
 	}
-	bold, dim, reset := "\033[1m", "\033[2m", "\033[0m"
-	if os.Getenv("NO_COLOR") != "" {
-		bold, dim, reset = "", "", ""
-	}
+	bold, dim, reset := ansiCodes()
 	fmt.Println()
 	fmt.Printf("  %sFirst run.%s Pick a starter model to install — chat works as soon as it's done.\n", bold, reset)
 	fmt.Printf("  %sRecommended for your hardware (%d GB RAM):%s %s — %s %s(%.1f GB)%s\n",

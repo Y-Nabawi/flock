@@ -41,6 +41,18 @@ func getCatalog() []models.Entry {
 	return globalCatalog
 }
 
+// modelInCatalog reports whether `model` is a known catalog id. Used
+// to bound Prometheus label cardinality — a client-supplied model
+// string that never resolved is not safe as a label value.
+func modelInCatalog(model string) bool {
+	for _, e := range getCatalog() {
+		if e.ID == model {
+			return true
+		}
+	}
+	return false
+}
+
 // rateLimitEstimateKey is unexported so other packages can't shadow the
 // estimate (which is meaningful only to the rate-limit reconciliation
 // path).
@@ -136,8 +148,16 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		completion = u.CompletionTokens
 	}
 
-	// Metrics first — always, regardless of auth state.
-	metrics.ObserveRequest(model, protocol, outcome, latency, prompt, completion)
+	// Metrics first — always, regardless of auth state. Bound the label
+	// cardinality: on non-ok outcomes the model string may be raw client
+	// input that never resolved against the catalog, so label those
+	// "unknown". The usage row below keeps the raw string — it's useful
+	// for debugging there and the DB column isn't a Prometheus label.
+	metricsModel := model
+	if outcome != "ok" && !modelInCatalog(model) {
+		metricsModel = "unknown"
+	}
+	metrics.ObserveRequest(metricsModel, protocol, outcome, latency, prompt, completion)
 
 	cost := models.CostOf(model, getCatalog(), prompt, completion)
 	rec := store.Usage{
@@ -196,7 +216,7 @@ func recordUsage(ctx context.Context, st store.Store, protocol, model string,
 		if _, tpm := globalBucketStore.Get(est.KeyID); tpm != nil {
 			switch {
 			case actual > est.Estimate:
-				tpm.Refund(-float64(actual - est.Estimate))
+				tpm.Deduct(float64(actual - est.Estimate))
 			case actual < est.Estimate:
 				tpm.Refund(float64(est.Estimate - actual))
 			}

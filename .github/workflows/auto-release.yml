@@ -63,7 +63,10 @@ jobs:
           # (or "BREAKING-CHANGE:"). The looser substring match here used
           # to mean any commit describing the script in prose triggered a
           # major bump on itself (this footer doesn't, because of the ^).
-          if grep -qE '^(feat|fix|chore|refactor|test|docs|ci|build|perf|style)!:' <<< "$commits" \
+          # The optional (\([^)]*\))? covers the scoped breaking form, e.g.
+          # "feat(api)!:" — without it a scoped breaking change matched
+          # neither this regex nor the minor one and produced NO release.
+          if grep -qE '^(feat|fix|chore|refactor|test|docs|ci|build|perf|style)(\([^)]*\))?!:' <<< "$commits" \
              || grep -qE '^BREAKING[ -]CHANGE:' <<< "$commits"; then
             bump="major"
           elif grep -qE '^feat(\([^)]*\))?:' <<< "$commits"; then
@@ -80,6 +83,14 @@ jobs:
           # Bump <major>.<minor>.<patch> per the classification.
           ver="${last_tag#v}"
           IFS='.' read -r maj min pat <<< "$ver"
+          # Prerelease/build tags like v1.2.3-rc1 leave "3-rc1" in pat, and
+          # $((pat+1)) on that is an arithmetic error that kills the job
+          # under set -euo pipefail. Strip the -suffix/+metadata first.
+          pat="${pat%%[-+]*}"
+          if ! [[ "$maj" =~ ^[0-9]+$ && "$min" =~ ^[0-9]+$ && "$pat" =~ ^[0-9]+$ ]]; then
+            echo "cannot parse semver from last tag '$last_tag' (got maj='$maj' min='$min' pat='$pat')" >&2
+            exit 1
+          fi
           case "$bump" in
             major) maj=$((maj+1)); min=0; pat=0 ;;
             minor) min=$((min+1)); pat=0 ;;

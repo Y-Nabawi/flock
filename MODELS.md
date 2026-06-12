@@ -22,9 +22,10 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 | Model ID                       | Size   | Min RAM | Chat | Code | Reasoning | Vision | Audio | Long ctx | License     | Notes                                  |
 | ------------------------------ | ------ | ------- | :--: | :--: | :-------: | :----: | :---: | :------: | ----------- | -------------------------------------- |
 | **Edge — laptop / Raspberry-Pi-ish** |  |  |  |  |  |  |  |  |  |  |
-| `llama-3.2-1b`                 | 1.3 GB | 2 GB    |  •   |      |           |        |       |          | Llama 3.2   | Smoke test only                        |
-| `moondream3`                   | 1.2 GB | 4 GB    |  ●   |      |           |   ●    |       |          | Apache-2.0  | Tiny vision-language, runs on Pi       |
-| `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |       |          | Llama 3.2   | Edge default                           |
+| `llama-3.2-1b`                 | 1.3 GB | 2 GB    |  •   |      |           |        |       |          | Llama 3.2 \* | Smoke test only                        |
+| `nomic-embed-text`             | 0.3 GB | 2 GB    |      |      |           |        |       |          | Apache-2.0  | Embeddings for RAG (768-dim, 8K ctx)   |
+| `moondream3`                   | 1.2 GB | 4 GB    |  ●   |      |           |   ●    |       |          | BSL-1.1 \*  | Tiny vision-language, runs on Pi       |
+| `llama-3.2-3b` ⭐               | 2.0 GB | 4 GB    |  ●   |      |           |        |       |          | Llama 3.2 \* | Edge default                           |
 | **Small — 8-16 GB box**        |        |         |      |      |           |        |       |          |             |                                        |
 | `mimo-7b`                      | 4.5 GB | 8 GB    |  ●   |      |    ●●     |        |       |          | Apache-2.0  | Xiaomi reasoning-focused 7B            |
 | `qwen-coder-7b`                | 4.7 GB | 8 GB    |  ●   |  ●   |           |        |       |          | Apache-2.0  | FIM-capable, older                     |
@@ -34,36 +35,36 @@ Scan the column that matches your hardware, then pick by use case. ⭐ = recomme
 | `lfm2.5-8b-a1b` ⭐              | 5.0 GB | 8 GB    |  ●   |      |    ●●     |        |       |    ●●    | LFM Open    | Best on-device MoE (1B active)         |
 | `qwen3-8b`                     | 5.2 GB | 12 GB   |  ●   |      |           |        |       |          | Apache-2.0  | General chat                           |
 | `qwen3-vl-8b`                  | 5.5 GB | 10 GB   |  ●   |  ●   |           |   ●●   |       |          | Apache-2.0  | Vision + tools (charts, OCR, UI)       |
-| `gemma4-e2b`                   | 7.2 GB | 8 GB    |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma       | Mobile/edge multimodal (T/I/A)         |
+| `gemma4-e2b`                   | 7.2 GB | 8 GB    |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma \*    | Mobile/edge multimodal (T/I/A)         |
 | `mellum2-12b`                  | 7.0 GB | 12 GB   |  ●   |  ●●  |    ●●     |        |       |          | Apache-2.0  | JetBrains MoE coder (2.5B active)      |
 | `mistral-nemo-12b`             | 7.1 GB | 12 GB   |  ●   |      |           |        |       |    ●●    | Apache-2.0  | 128K context                           |
-| `gemma4-12b`                   | 7.6 GB | 12 GB   |  ●   |      |           |   ●●   |   ●   |    ●●    | Gemma       | Encoder-free any-to-any (T/I/A/V)      |
+| `gemma4-12b`                   | 7.6 GB | 12 GB   |  ●   |      |           |   ●●   |   ●   |    ●●    | Gemma \*    | Encoder-free any-to-any (T/I/A/V)      |
 | `pixtral-12b`                  | 7.8 GB | 16 GB   |  ●   |      |           |   ●●   |       |          | Apache-2.0  | Mistral vision-language                |
 | `qwen-coder-14b`               | 9.0 GB | 16 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense code+agent                       |
 | `qwen3-14b`                    | 9.0 GB | 16 GB   |  ●   |      |           |        |       |          | Apache-2.0  | More capable Qwen3 chat                |
 | `phi-4-14b`                    | 9.1 GB | 12 GB   |  ●   |      |    ●●     |        |       |          | MIT         | Strong reasoning per byte              |
-| `gemma4-e4b`                   | 9.6 GB | 12 GB   |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma       | Mobile/edge multimodal, larger E-tier  |
+| `gemma4-e4b`                   | 9.6 GB | 12 GB   |  ●   |      |           |   ●    |   ●   |    ●●    | Gemma \*    | Mobile/edge multimodal, larger E-tier  |
 | **Mid — 24-32 GB box**         |        |         |      |      |           |        |       |          |             |                                        |
 | `gpt-oss-20b` ⭐                | 14 GB  | 16 GB   |  ●   |  ●   |    ●●     |        |       |    ●     | Apache-2.0  | OpenAI open-weight, adjustable thinking |
 | `qwen3.6-27b` ⭐                | 17 GB  | 24 GB   |  ●●  |  ●●  |    ●      |        |       |    ●●    | Apache-2.0  | 77 % SWE-bench, top consumer pick      |
-| `gemma4-26b`                   | 18 GB  | 24 GB   |  ●   |      |           |   ●    |       |    ●●    | Gemma       | MoE 4B-active, multimodal              |
+| `gemma4-26b`                   | 18 GB  | 24 GB   |  ●   |      |           |   ●    |       |    ●●    | Gemma \*    | MoE 4B-active, multimodal              |
 | `qwen3-30b`                    | 19 GB  | 24 GB   |  ●●  |      |           |        |       |    ●●    | Apache-2.0  | MoE 3B-active, very fast               |
 | `qwen3-coder-30b`              | 19 GB  | 24 GB   |  ●   |  ●●  |           |        |       |    ●●    | Apache-2.0  | MoE 3.3B-active coder                  |
 | `qwen-coder-32b`               | 20 GB  | 32 GB   |  ●   |  ●●  |           |        |       |          | Apache-2.0  | Dense, older but proven                |
 | `qwen3-vl-32b`                 | 20 GB  | 32 GB   |  ●   |  ●   |           |   ●●●  |       |          | Apache-2.0  | Frontier-tier vision-language          |
-| `gemma4-31b`                   | 20 GB  | 32 GB   |  ●   |      |           |   ●●   |       |    ●●    | Gemma       | Multimodal, larger than 26B            |
+| `gemma4-31b`                   | 20 GB  | 32 GB   |  ●   |      |           |   ●●   |       |    ●●    | Gemma \*    | Multimodal, larger than 26B            |
 | **Power user — single 80 GB GPU / sharded** |  |  |  |  |  |  |  |  |  |  |
-| `llama-3.3-70b-sharded`        | 43 GB  | 48 GB   |  ●●  |      |           |        |       |    ●●    | Llama 3.3   | Needs ≥2 nodes                         |
+| `llama-3.3-70b-sharded`        | 43 GB  | 48 GB   |  ●●  |      |           |        |       |    ●●    | Llama 3.3 \* | Needs ≥2 nodes                         |
 | `gpt-oss-120b`                 | 65 GB  | 80 GB   |  ●●  |  ●   |    ●●●    |        |       |    ●     | Apache-2.0  | ≈ o4-mini reasoning, single H100       |
-| `llama-4-scout`                | 67 GB  | 80 GB   |  ●●  |      |           |   ●●   |       |   ●●●    | Llama 4     | 10M context, multimodal                |
+| `llama-4-scout`                | 67 GB  | 80 GB   |  ●●  |      |           |   ●●   |       |   ●●●    | Llama 4 \*  | 10M context, multimodal                |
 | **Frontier — multi-machine sharded** |        |         |      |      |           |        |       |          |             |                                        |
 | `step-3.7-flash-sharded` ⭐     | 100 GB | 128 GB  |  ●●  |  ●●  |    ●●     |   ●●   |       |    ●●    | Apache-2.0  | 11B active VLM, fastest frontier MoE   |
 | `deepseek-v4-flash-sharded` ⭐  | 150 GB | 160 GB  |  ●●  |  ●●  |    ●●●    |        |       |    ●●    | MIT         | 13B active = fast at frontier quality  |
-| `nemotron-3-ultra-sharded`     | 280 GB | 320 GB  |  ●●  |  ●●  |    ●●●    |        |       |   ●●●    | NVIDIA Open | Hybrid Mamba-MoE, 1M ctx, MMLU 89.1    |
+| `nemotron-3-ultra-sharded`     | 280 GB | 320 GB  |  ●●  |  ●●  |    ●●●    |        |       |   ●●●    | NVIDIA Open \* | Hybrid Mamba-MoE, 1M ctx, MMLU 89.1    |
 | `glm-5.1-sharded`              | 400 GB | 416 GB  |  ●●  |  ●●● |    ●●     |        |       |    ●●    | MIT         | Best agentic coder                     |
 | `kimi-k2.6-sharded`            | 500 GB | 512 GB  |  ●●  |  ●●● |    ●●     |        |       |    ●●    | Mod. MIT    | #1 open coding benchmarks              |
 
-**Legend** — • basic / ● good / ●● strong / ●●● best-in-tier · ⭐ recommended starting point
+**Legend** — • basic / ● good / ●● strong / ●●● best-in-tier · ⭐ recommended starting point · \* restricted license — these 11 entries carry the `restricted-license` catalog tag (extra terms beyond Apache/MIT-style permissive; same amber badge the dashboard shows). `flock model search restricted-license` lists them; `flock model info <id>` links the license text.
 
 > Sizes assume Q4_K_M (Ollama's default). Sharded entries assume Q4 baseline; unsloth's 2-bit dynamic GGUFs cut them roughly in half.
 

@@ -52,6 +52,12 @@ func cmdConnect(args []string) {
 	})
 	_ = fs.Parse(args)
 
+	// 0 = unset (header omitted). The gateway accepts 1-5; reject anything
+	// else here so the snippet never embeds a value the server will refuse.
+	if *retries != 0 && (*retries < 1 || *retries > 5) {
+		die("--retries must be between 1 and 5 (got %d)", *retries)
+	}
+
 	if *list {
 		printClientList(os.Stdout)
 		return

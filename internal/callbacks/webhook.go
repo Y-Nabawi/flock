@@ -20,10 +20,10 @@ import (
 // Event struct, signed with HMAC-SHA256 over the body when Secret is
 // set; the signature lands in `X-Flock-Signature`.
 //
-// Retries: 3 attempts with 250ms / 500ms / 1s backoff for transient
-// failures (5xx or transport error). Anything else (4xx, malformed
-// URL) is dropped after the first attempt — no point burning the
-// queue on a permanent receiver-side bug.
+// Retries: 4 attempts (the first immediate, then 250ms / 500ms / 1s
+// backoff) for transient failures (5xx or transport error). Anything
+// else (4xx, malformed URL) is dropped after the first attempt — no
+// point burning the queue on a permanent receiver-side bug.
 type Webhook struct {
 	id     string
 	url    string
@@ -34,6 +34,8 @@ type Webhook struct {
 	wg     sync.WaitGroup
 	stop   chan struct{}
 	once   sync.Once
+	ctx    context.Context // worker lifetime — cancelled when stop fires
+	cancel context.CancelFunc
 	client *http.Client
 }
 
@@ -66,6 +68,7 @@ func NewWebhook(cfg WebhookConfig, log *slog.Logger) *Webhook {
 		stop:   make(chan struct{}),
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
+	w.ctx, w.cancel = context.WithCancel(context.Background())
 	if len(cfg.Events) > 0 {
 		w.events = make(map[string]bool, len(cfg.Events))
 		for _, e := range cfg.Events {
@@ -102,7 +105,12 @@ func (w *Webhook) Send(_ context.Context, e Event) {
 }
 
 func (w *Webhook) Close(ctx context.Context) error {
-	w.once.Do(func() { close(w.stop) })
+	w.once.Do(func() {
+		close(w.stop)
+		// Cancel the worker ctx too so an in-flight delivery's retry
+		// backoff aborts instead of holding up shutdown.
+		w.cancel()
+	})
 	done := make(chan struct{})
 	go func() { w.wg.Wait(); close(done) }()
 	select {
@@ -118,14 +126,16 @@ func (w *Webhook) run() {
 	for {
 		select {
 		case <-w.stop:
-			// Drain whatever's left so we don't drop on graceful shutdown.
-			// Bounded by the queue's current length so we can't loop
-			// forever if a producer keeps writing.
+			// Empty whatever's left so queued events are counted rather
+			// than silently lost. The worker ctx is already cancelled at
+			// this point, so each event gets at most one fast attempt and
+			// in-flight backoff aborts. Bounded by the queue's current
+			// length so we can't loop forever if a producer keeps writing.
 			n := len(w.queue)
 			for i := 0; i < n; i++ {
 				select {
 				case e := <-w.queue:
-					w.deliver(context.Background(), e)
+					w.deliver(w.ctx, e)
 				default:
 					return
 				}
@@ -133,7 +143,7 @@ func (w *Webhook) run() {
 			return
 		case e := <-w.queue:
 			metrics.SetCallbackQueueDepth(w.id, len(w.queue))
-			w.deliver(context.Background(), e)
+			w.deliver(w.ctx, e)
 		}
 	}
 }

@@ -83,7 +83,7 @@
 
 ## 🚀 Try it in 60 seconds
 
-Flock is engine-agnostic. The quickest path uses **Ollama** as the local engine — but vLLM, MLX-LM, and llama.cpp-RPC all work. See [Choose your engine](#choose-your-engine) below for the alternatives.
+Flock is engine-agnostic. The quickest path uses **Ollama** as the local engine — but vLLM, MLX-LM, and llama.cpp-RPC all work. See [Prerequisites — read first](#prerequisites--read-first) below for the alternatives.
 
 ### 🍎 macOS (Apple Silicon — M1/M2/M3/M4)
 
@@ -388,7 +388,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 - **Per-key model allowlist** — pin a key to specific model ids (or vendor families via `claude-*` / `gpt-*` globs); unauthorized models return 403 `model_not_allowed` and the refusal is audit-logged
 - Standard `X-RateLimit-*` headers on every `/v1/*` response + always-on `X-Flock-Request-Id` correlation token (also embedded in audit rows for traceability)
 - Audit log of every admin mutation + middleware refusals (`model_not_allowed`, `budget_exceeded`, `router.override`, `guardrail.block`)
-- OIDC login for the web UI (Google, GitHub, Okta) — **planned**; the UI currently uses a pasted admin key
+- OIDC / SSO login for the web UI — **not planned** (explicitly out of scope; see [ROADMAP.md](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). The UI uses a pasted admin key; per-user API keys + quotas + audit cover accountability
 
 ```bash
 flock token create alice --models qwen-coder-7b,qwen3-14b   # restrict at creation
@@ -486,13 +486,13 @@ Flock ships a curated catalog of **37 open-weight models** in `catalog/*.yaml`, 
 
 | Tier | Models |
 |---|---|
-| **Edge (≤2 GB RAM)** | `llama-3.2-1b`, `llama-3.2-3b` |
-| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `lfm2.5-8b-a1b` ⭐, `qwen3-8b`, `mellum2-12b`, `mistral-nemo-12b`, `gemma4-12b` (multimodal), `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
-| **Consumer big (16-32 GB)** | `gpt-oss-20b` ⭐, `qwen3.6-27b` ⭐, `gemma4-26b`, `qwen3-30b`, `qwen3-coder-30b`, `qwen-coder-32b` |
+| **Edge (≤4 GB RAM)** | `llama-3.2-1b`, `llama-3.2-3b`, `nomic-embed-text` (embeddings), `moondream3` (vision) |
+| **Small / laptop (8-16 GB)** | `qwen-coder-7b`, `deepseek-r1-8b`, `lfm2.5-8b-a1b` ⭐, `qwen3-8b`, `mimo-7b`, `mimo-audio` (audio), `mimo-vl-7b` (vision), `gemma4-e2b` (vision+audio), `gemma4-e4b` (vision+audio), `qwen3-vl-8b` (vision), `mellum2-12b`, `mistral-nemo-12b`, `gemma4-12b` (multimodal), `pixtral-12b` (vision), `qwen3-14b`, `qwen-coder-14b`, `phi-4-14b` |
+| **Consumer big (16-32 GB)** | `gpt-oss-20b` ⭐, `qwen3.6-27b` ⭐, `gemma4-26b`, `gemma4-31b` (vision), `qwen3-30b`, `qwen3-coder-30b`, `qwen3-vl-32b` (vision), `qwen-coder-32b` |
 | **Single 80 GB GPU** | `llama-3.3-70b-sharded`, `gpt-oss-120b`, `llama-4-scout` (10M ctx, multimodal) |
 | **Sharded frontier (≥128 GB combined)** | `step-3.7-flash-sharded` ⭐ (Apache-2.0), `deepseek-v4-flash-sharded`, `nemotron-3-ultra-sharded` (Mamba-MoE, 1M ctx), `glm-5.1-sharded`, `kimi-k2.6-sharded` |
 
-⭐ = current top picks (June 2026).
+⭐ = current top picks (June 2026). All 37 catalog entries are listed; [MODELS.md](MODELS.md) has the full picker table with sizes, RAM floors, and licenses.
 
 Run `flock model search` to list everything live with sizes and capabilities, or `flock model info <id>` for one model's full spec. Add `--sort=released` for newest-first, `--since 2026-01-01` to filter by date, or `--json` for machine-readable output. `flock model ls`, `flock status`, `flock usage`, and `flock audit` also accept `--json`. Running any `flock model add|info|remove` or `flock connect` with no ID launches an interactive picker (type to filter; arrow keys to navigate). Output is colored when stdout is a TTY; set `NO_COLOR=1` (or `FLOCK_NO_COLOR=1`) to disable.
 
@@ -516,10 +516,10 @@ Routing logic lives in `internal/api/egress.go`; vendor detection in `internal/r
 These work today via `flock model add hf:owner/repo` but don't have curated YAML entries with hardware specs:
 
 - **Larger general / agent models** — Qwen3-235B, MiniMax-M2.7, MiMo-V2 sharded variants — pending sharded YAML entries.
-- **Speech / transcription** — `/v1/audio/transcriptions` not yet shipped.
-- **Rerank** — `/v1/rerank` not yet shipped (capability declared in catalog schema for future use).
 
 Shipped recently (don't fall in this list):
+- **Speech / transcription** — `/v1/audio/transcriptions` (and `/v1/audio/speech`) proxy to an optional Whisper / Piper endpoint (`engine.whisper_endpoint` / `engine.piper_endpoint`, or `FLOCK_WHISPER_ENDPOINT` / `FLOCK_PIPER_ENDPOINT`); HTTP 501 with a setup hint when unconfigured.
+- **Rerank** — `/v1/rerank` passes through to llama-server's native rerank endpoint (b3580+); Cohere-shape response.
 - **Vision (image input)** — `gemma4-12b`, `gemma4-26b`, `gemma4-31b`, `gemma4-e2b`, `gemma4-e4b`, `qwen3-vl-8b`, `qwen3-vl-32b`, `pixtral-12b`, `moondream3`, `mimo-vl-7b`, `llama-4-scout` all serve through `/v1/chat/completions` with `image_url` content blocks.
 - **Embeddings (for RAG)** — `/v1/embeddings` is live; install `nomic-embed-text` and call it from any OpenAI-shape embedding client.
 - **Audio (input)** — `mimo-audio`, `gemma4-e2b`, `gemma4-e4b` declare `audio` capability for future routing; today they serve as `chat` models.
@@ -713,7 +713,7 @@ Requires Go 1.25+. See [ARCHITECTURE.md → Build from source](ARCHITECTURE.md#b
 | `flock up` says "engine not reachable" | Ollama daemon not running | `ollama serve &` (Linux: `sudo systemctl start ollama`) |
 | `Port 8080 in use` | Another process is using the port | `FLOCK_LISTEN=:8081 flock up` |
 | `checksum MISMATCH` | Corrupt download or tampering | Re-run installer; if it persists, file a security report (see SECURITY.md) |
-| GH API rate-limited during install | Anonymous GH API limit (60/hr) | Wait, or set `FLOCK_VERSION=v0.x.y` to skip the lookup |
+| GH API rate-limited during install | Anonymous GH API limit (60/hr) | Wait, or set `FLOCK_VERSION` to a release tag (e.g. `FLOCK_VERSION=v1.20.1`) to skip the lookup |
 
 ---
 
@@ -743,6 +743,8 @@ external_url: ""                      # public URL printed in UI; empty → use 
 data_dir: "~/.flock"                  # root for state.db, models, logs
 log_level: "info"                     # debug | info | warn | error
 catalog_dir: ""                       # empty → built-in catalog/ directory
+max_body_bytes: 0                     # request-body cap on /v1/* in bytes;
+                                      # 0 → built-in 32 MiB ceiling
 
 storage:
   type: "sqlite"                      # only sqlite ships today
@@ -758,10 +760,21 @@ engine:
   vllm_endpoint:     "http://127.0.0.1:8000"
   mlx_endpoint:      "http://127.0.0.1:8080"
   llamacpp_endpoint: "http://127.0.0.1:8089"   # llama-server (single-node or RPC coordinator) — port chosen to avoid Flock leader :8080 and worker :8081
+  whisper_endpoint: ""                # optional Whisper-compatible server for
+                                      # /v1/audio/transcriptions; empty → 501
+  piper_endpoint: ""                  # optional Piper-compatible server for
+                                      # /v1/audio/speech; empty → 501
 
 router:
   default_model: ""                   # empty → auto-pick on first up
-  sticky_sessions: true
+  sticky_sessions: true               # legacy boolean; superseded by the TTL below
+  sticky_session_ttl_seconds: 0       # >0 → pin (user, model) to its last worker
+                                      # for this many seconds (KV-cache reuse)
+  placement_allowed_fails: 0          # consecutive engine errors before a worker
+                                      # is parked in cooldown (circuit breaker);
+  placement_cooldown_seconds: 0       # both must be >0 to enable
+  hedge_replicas: 0                   # >1 → allow per-request hedging across the
+                                      # N least-loaded workers (`flock.hedge: true`)
   latency_fallback_p95_seconds: 0     # 0 = disabled. When >0, the router
                                        # walks the catalog `fallback:` chain
                                        # for a faster candidate FIRST whenever
@@ -772,18 +785,42 @@ router:
     anthropic_url: "https://api.anthropic.com"
     openai_url:    "https://api.openai.com"
     # Bedrock (AWS) — signed via aws-sdk-go-v2 using the standard AWS
-    # credentials chain (env, shared config, instance role). v0.6 supports
+    # credentials chain (env, shared config, instance role). Supports
     # the anthropic.* model family non-streaming; amazon.*/meta.*/mistral.*
-    # return 501 (body translation arrives v0.7).
+    # return 501 (body translation not yet shipped).
     bedrock_region: ""                # e.g. us-east-1
+    bedrock_url: ""                   # optional endpoint override
     # Vertex (GCP) — ADC auth probe wired; body translation for
-    # generateContent lands v0.7. Set the project and a 501 with ADC
-    # status returns until then.
+    # generateContent not yet shipped. Set the project and a 501 with
+    # ADC status returns until then.
     vertex_project:  ""               # GCP project id
     vertex_location: "us-central1"
+    vertex_url: ""                    # optional endpoint override
+    # OpenAI-compatible hosted gateways — URL overrides only; the keys
+    # come from env (OPENROUTER_API_KEY, GROQ_API_KEY, …).
+    openrouter_url: ""
+    groq_url: ""
+    together_url: ""
+    fireworks_url: ""
+    cohere_url: ""
+    mistral_url: ""
+    perplexity_url: ""
 
 observability:
   otlp_endpoint: ""                   # e.g. http://localhost:4318 — empty disables tracing (no-op overhead)
+  callbacks: []                       # usage/audit event sinks — list of
+                                      # {kind: webhook|langfuse, id, url, secret,
+                                      #  events, host, public_key, secret_key,
+                                      #  queue_size}; see "Observability callbacks"
+  guardrails: []                      # synchronous content checks — list of
+                                      # {name, kind: webhook, mode: pre|logging_only,
+                                      #  url, auth_key, headers, fail_open,
+                                      #  timeout_seconds}; see "Guardrails framework"
+  response_cache:
+    enabled: false                    # cache embeddings responses by request hash
+    driver: "memory"                  # memory | sqlite
+    max_entries: 0                    # memory driver only; 0 → 1000
+    default_ttl_seconds: 0            # 0 → 24h
 
 placement:                            # memory lifecycle for this node's local engine
   exclusive: false                    # true → one resident model per machine: every
@@ -813,9 +850,9 @@ placement:                            # memory lifecycle for this node's local e
 | `FLOCK_CATALOG_DIR` | `catalog_dir` — overrides catalog lookup. Default search order: `$FLOCK_CATALOG_DIR` → `./catalog` → `<exe-dir>/catalog` → `~/.flock/catalog` (curl installer) → `/usr/local/share/flock/catalog` → `/usr/share/flock/catalog` (.deb/.rpm) |
 | `FLOCK_OTLP_ENDPOINT` | `observability.otlp_endpoint` (OTLP/HTTP collector URL or bare `host:port`) |
 | `FLOCK_COORDINATOR_NODE` | which node hosts the `llama-server` coordinator for sharded models; `local` forces leader, otherwise a node id. Default: highest-RAM worker. |
-| `FLOCK_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader is on v0.5+. |
-| `FLOCK_BEDROCK_REGION` | `router.fallback.bedrock_region` — enables Bedrock with real SigV4 signing for the anthropic.* family (v0.6); other families return 501 |
-| `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation lands v0.7 |
+| `FLOCK_REJECT_BEARER` | set to `1` on a worker to refuse the bearer-fallback auth path and require HMAC for every `/v1/process/*` call. Use once every leader supports HMAC node auth (any current release). |
+| `FLOCK_BEDROCK_REGION` | `router.fallback.bedrock_region` — enables Bedrock with real SigV4 signing for the anthropic.* family; other families return 501 |
+| `FLOCK_VERTEX_PROJECT` | `router.fallback.vertex_project` — wires ADC auth check; body translation not yet shipped |
 | `FLOCK_VERTEX_LOCATION` | `router.fallback.vertex_location` (default `us-central1`) |
 | `FLOCK_LATENCY_P95_SECONDS` | `router.latency_fallback_p95_seconds` — when primary p95 exceeds this, prefer a faster fallback. 0 = disabled (default) |
 | `FLOCK_EXCLUSIVE` | `placement.exclusive` (truthy `1/true`) — one resident model per machine |
@@ -828,11 +865,11 @@ placement:                            # memory lifecycle for this node's local e
 
 These features are mentioned elsewhere in this README but have no YAML knob today. The list is here so you don't waste time guessing.
 
-- **Mesh backend selection** — only the LAN backend ships in v0.4. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
-- **OIDC for the UI** — `internal/auth/` ships API keys only. The UI uses a pasted admin key for now.
-- **Scheduler policy / replication / drain timeout** — `internal/scheduler/` ships sharding orchestration only; placement is naive least-loaded with no tunables.
-- **Per-model fallback routing** — the fallback chain is all-or-nothing today (any unknown `claude-*` → Anthropic, any unknown `gpt-*` → OpenAI). Per-model whitelists are not parsed.
-- **Observability endpoints / OTLP** — Prometheus is hardcoded to the main `/metrics` endpoint; no OTLP exporter, no separate Prometheus listener.
+- **Mesh backend selection** — only the LAN backend ships today; there are no `mesh.*` config keys. The `tailscale` (tsnet) backend has an interface defined in `internal/mesh/` but no implementation. Tracked in [ROADMAP.md](ROADMAP.md).
+- **OIDC for the UI** — out of scope (see [ROADMAP.md → Explicitly killed scope](ROADMAP.md#explicitly-killed-or-sibling-projected-scope)). `internal/auth/` ships API keys only; the UI uses a pasted admin key.
+- **Scheduler policy / replication** — `internal/scheduler/` ships sharding orchestration + GGUF distribution; placement is naive least-loaded with no policy tunables.
+- **Per-model fallback routing** — the vendor fallback is all-or-nothing today (any unknown `claude-*` → Anthropic, any unknown `gpt-*` → OpenAI). Per-model vendor whitelists are not parsed.
+- **Separate metrics listener** — Prometheus is hardcoded to the main `/metrics` endpoint on the gateway port; there's no dedicated metrics listener. (OTLP tracing *is* configurable — `observability.otlp_endpoint` / `FLOCK_OTLP_ENDPOINT` above.)
 - **Per-node config (`~/.flock/node.yaml`)** — not read. Workers inherit engine endpoints from the leader's config or their own env vars.
 
 ### Per-node engine override
@@ -938,7 +975,7 @@ flock shard remove llama-3.3-70b-sharded    # stops coordinator + every rpc-serv
 
 Or open `http://leader:8080` → **Shards** tab → "Create sharded model" form + per-model "Tear down" buttons.
 
-**Caveats (v0.4):**
+**Caveats:**
 - Shard crash recovery is automatic for up to 5 restarts with exponential backoff (1s, 2s, 4s, 8s, 16s). After that the process enters `crashloop` state and the admin must intervene — typically by re-running `flock shard create`. Both `rpc-server` and the `llama-server` coordinator restart this way. See `internal/agent/supervisor.go`.
 - Coordinator always runs on the leader.
 - Worker bin-packing is naive (descending free-RAM); doesn't factor GPU memory or current load.
@@ -949,7 +986,7 @@ Or open `http://leader:8080` → **Shards** tab → "Create sharded model" form 
 flock node ls
 # ID            HOSTNAME      HARDWARE          ENGINE   MODEL              STATE
 # n_abc123      mac-mini-1    M4 Pro / 64 GB    mlx      qwen-coder-14b     ready
-# n_def456      gpu-tower     2× RTX 5090       vllm     qwen3-72b          ready
+# n_def456      gpu-tower     2× RTX 5090       vllm     qwen3-30b          ready
 # n_ghi789      lab-mac       M2 Pro / 32 GB    mlx      —                  idle
 ```
 
@@ -975,7 +1012,7 @@ flock model search vision
 ### Add a model
 
 ```bash
-flock model add qwen3-coder                      # from catalog
+flock model add qwen3-coder-30b                  # from catalog
 flock model add hf:Qwen/Qwen3-72B-AWQ            # from HuggingFace (scheme prefix)
 flock model add ollama:phi3:mini                 # any Ollama tag
 flock model add file:/abs/path/my-finetune.gguf  # pre-downloaded GGUF
@@ -1004,7 +1041,7 @@ This:
 flock model ls
 # MODEL              NODES                   STATE    REQUESTS/MIN   TOK/S
 # qwen-coder-14b     n_abc123, n_ghi789      serving  4.2            42
-# qwen3-72b          n_def456                serving  1.1            68
+# qwen3-30b          n_def456                serving  1.1            68
 ```
 
 ### Load, unload, and pin (memory lifecycle)
@@ -1052,9 +1089,9 @@ How it works:
 flock model remove qwen-coder-14b
 ```
 
-### Add a LoRA adapter (planned, v0.5)
+### Add a LoRA adapter (planned)
 
-LoRA adapter loading (`flock model adapter add`) is on the roadmap; see TASKS.md.
+LoRA adapter loading (`flock model adapter add`) is on the roadmap for a future release; see TASKS.md.
 
 ---
 
@@ -1161,7 +1198,7 @@ Add to `~/.zshrc` or `~/.bashrc` to make permanent.
     {
       "title": "Flock - Qwen3-Coder",
       "provider": "openai",
-      "model": "qwen3-coder",
+      "model": "qwen3-coder-30b",
       "apiBase": "http://flock.your-tailnet.ts.net/v1",
       "apiKey": "sk-orc-…"
     }
@@ -1174,7 +1211,7 @@ Add to `~/.zshrc` or `~/.bashrc` to make permanent.
 ```bash
 aider --openai-api-base http://flock.your-tailnet.ts.net/v1 \
       --openai-api-key sk-orc-… \
-      --model openai/qwen3-coder
+      --model openai/qwen3-coder-30b
 ```
 
 ### OpenAI Python SDK
@@ -1205,7 +1242,7 @@ client = Anthropic(
 )
 
 resp = client.messages.create(
-    model="qwen3-coder",
+    model="qwen3-coder-30b",
     max_tokens=1024,
     messages=[{"role": "user", "content": "explain CRDTs"}],
 )
@@ -1222,9 +1259,12 @@ print(resp.content[0].text)
 |---|---|---|
 | `POST` | `/v1/chat/completions` | Streaming + non-streaming; accepts `image_url` content blocks (Ollama path). Returns typed `engine_unreachable` errors with engine name + start hint when the upstream engine is down. |
 | `POST` | `/v1/embeddings` | Ollama embedding models (e.g. `nomic-embed-text`) |
+| `POST` | `/v1/rerank` | Pass-through to llama-server's native `/v1/rerank` (b3580+); Cohere-shape response |
+| `POST` | `/v1/audio/transcriptions` | Proxies to `engine.whisper_endpoint` / `FLOCK_WHISPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
+| `POST` | `/v1/audio/speech` | Proxies to `engine.piper_endpoint` / `FLOCK_PIPER_ENDPOINT`; HTTP 501 with setup hint when unconfigured |
 | `GET` | `/v1/models` | Lists available models |
 
-(Planned: `/v1/completions`, `/v1/audio/transcriptions`, `/v1/rerank`.)
+(Planned: `/v1/completions`.)
 
 ### Anthropic surface
 
@@ -1273,7 +1313,7 @@ All admin endpoints require an admin key (`flock token create --admin`).
 
 | Model name | Routes to |
 |---|---|
-| exact catalog ID (`qwen3-coder`) | local cluster, that model |
+| exact catalog ID (`qwen3-coder-30b`) | local cluster, that model |
 | `auto` | local; gateway picks based on heuristics |
 | `claude-…` | Anthropic API (proxied) |
 | `gpt-…`, `o3`, `o4` | OpenAI API (proxied) |
@@ -1337,9 +1377,28 @@ flock shard ls                    List shards across all sharded models
 flock shard remove <model> [--yes]  Tear down a sharded model (prompts unless --yes)
 
 # --- API keys / tokens ---
-flock token create [name]         Issue an API key (--admin, --node)
+flock token create [name]         Issue an API key (--admin, --node, --models a,b,
+                                  --rpm N, --tpm N, --ttl 7d, --expires-at DATE)
 flock token ls                    List API keys
+flock token edit <id>             Change a key's model allowlist / rate limits
+                                  (--add-model, --remove-model, --set-models,
+                                  --clear-models, --rpm, --tpm)
+flock token renew <id>            Extend expiry (--ttl DURATION | --expires-at DATE)
+flock token expire <id> [--in D]  Expire a key now (or in DURATION, e.g. --in 1h)
+flock token budget add <key-id> --window day|week|month --limit N --unit tokens|usd
+                                  Attach a token / dollar budget to a key
+flock token budget ls <key-id>    List a key's budgets
+flock token budget rm <key-id> <budget-id>  Remove a budget
 flock token revoke <id>           Revoke a key
+
+# --- connecting clients ---
+flock connect <client>            Print the copy-paste config snippet for a client
+                                  (--list shows the 19-client roster; --model,
+                                  --base-url, --token overrides)
+flock disconnect <client>         Print the rollback commands for a client (--list)
+flock invite <name>               Create a user token + shareable per-client
+                                  snippet card (--quota N, --clients a,b,
+                                  --model <id>, --base-url <url>, --format markdown|json)
 
 # --- observability ---
 flock usage [--limit N] [--user X] [--summary] [--json]
@@ -1428,7 +1487,7 @@ Common issues:
 
 - Token expired (5-minute TTL by default) — generate a fresh one in the UI
 - Clock skew >5 minutes between leader and node — fix NTP
-- Tailscale already running on the node — set `mesh.backend: lan` to use direct LAN
+- Leader unreachable from the worker — joining happens over plain LAN HTTP today (no built-in tailnet/mesh; there are no `mesh.*` config keys). Make sure the worker can reach `http://<leader-host>:8080` directly (same LAN or VPN, no firewall in between)
 
 ### Slow inference
 
@@ -1461,7 +1520,7 @@ For real coding work, yes — either an NVIDIA GPU on Linux or an Apple Silicon 
 Yes. That's a core design goal. The scheduler treats them as distinct pools and assigns models that fit each.
 
 **Does Flock work without internet?**
-Yes, after initial model download. The mesh requires a Tailscale coordination server reachable from each node for *joining*; once joined, traffic is direct. For air-gapped deployments, use Headscale (open-source Tailscale control server) or set `mesh.backend: lan`.
+Yes, after initial model download. Nodes talk to the leader directly over your LAN — there's no external coordination service to reach. For air-gapped installs, point `flock model add` at a local mirror and set `FLOCK_SKIP_SOURCE_CHECK=1` to skip the upstream-registry probe.
 
 **How is this different from Ollama?**
 Ollama is a great single-node inference engine. Flock is the *orchestration layer* across many machines. Flock uses Ollama as one of its supported engine backends.
@@ -1470,7 +1529,7 @@ Ollama is a great single-node inference engine. Flock is the *orchestration laye
 vLLM is a single-node inference server. Flock orchestrates vLLM (and others) across your fleet.
 
 **How is this different from exo?**
-exo is the closest project conceptually. Flock differs by: (1) Anthropic-API compatibility for Claude Code, (2) explicit hybrid local+vendor routing, (3) multi-tenant API keys / quotas / audit log (OIDC planned), (4) embedded UI and observability stack, (5) Go single-binary install.
+exo is the closest project conceptually. Flock differs by: (1) Anthropic-API compatibility for Claude Code, (2) explicit hybrid local+vendor routing, (3) multi-tenant API keys / quotas / audit log, (4) embedded UI and observability stack, (5) Go single-binary install.
 
 **Does Flock train models?**
 No. Use Axolotl / Unsloth / torchtune for training. Bring back a LoRA adapter; Flock will serve it.
@@ -1482,7 +1541,7 @@ Go ships a static binary as fast as Rust for this workload, with a faster develo
 Not initially. The product is the software you run.
 
 **Can I use my own Tailscale account?**
-Yes — set `mesh.tailnet_name` and `mesh.auth_key` to your tailnet. Otherwise Flock spins up a dedicated tailnet for the cluster.
+Flock has no built-in tailnet integration today — clustering is plain LAN HTTP, and there are no `mesh.*` config keys. Running Flock *over* a Tailscale network you manage yourself works fine (it's just IP connectivity between your machines); a built-in tsnet backend is a possible future addition (see [ROADMAP.md](ROADMAP.md)).
 
 **Does Flock support AMD GPUs?**
 Linux + ROCm via vLLM-ROCm is on the roadmap.

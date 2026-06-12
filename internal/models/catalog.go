@@ -121,32 +121,42 @@ type HardwareSpec struct {
 // An explicit non-empty dir argument skips the merge and reads only
 // that directory (used by tests and callers that know exactly what they
 // want).
+//
+// Entries are returned sorted by SizeBytes ascending on every path —
+// AutoPick (and anything else scanning for "largest that fits") relies
+// on that invariant.
 func LoadCatalog(dir string) ([]Entry, error) {
+	var out []Entry
 	if dir != "" {
-		return readCatalogDir(dir)
-	}
-	dirs := resolveCatalogDirs()
-	if len(dirs) == 0 {
-		return nil, fmt.Errorf("no catalog directory found")
-	}
-	// Merge into a map keyed by ID; later directories overwrite earlier
-	// ones. We do not warn the user about a shadowed entry — there's no
-	// good way to surface it without spamming startup logs. The
-	// dashboard's Catalog browser shows the *effective* entry, which is
-	// what matters operationally.
-	merged := map[string]Entry{}
-	for _, d := range dirs {
-		got, err := readCatalogDir(d)
+		got, err := readCatalogDir(dir)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range got {
-			merged[e.ID] = e
+		out = got
+	} else {
+		dirs := resolveCatalogDirs()
+		if len(dirs) == 0 {
+			return nil, fmt.Errorf("no catalog directory found")
 		}
-	}
-	out := make([]Entry, 0, len(merged))
-	for _, e := range merged {
-		out = append(out, e)
+		// Merge into a map keyed by ID; later directories overwrite earlier
+		// ones. We do not warn the user about a shadowed entry — there's no
+		// good way to surface it without spamming startup logs. The
+		// dashboard's Catalog browser shows the *effective* entry, which is
+		// what matters operationally.
+		merged := map[string]Entry{}
+		for _, d := range dirs {
+			got, err := readCatalogDir(d)
+			if err != nil {
+				return nil, err
+			}
+			for _, e := range got {
+				merged[e.ID] = e
+			}
+		}
+		out = make([]Entry, 0, len(merged))
+		for _, e := range merged {
+			out = append(out, e)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SizeBytes < out[j].SizeBytes })
 	return out, nil

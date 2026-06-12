@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/mattn/go-isatty"
 	"golang.org/x/term"
@@ -45,8 +47,36 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 	fmt.Fprint(out, "\x1b[?25l")       // hide cursor
 	defer fmt.Fprint(out, "\x1b[?25h") // restore on exit
 
+	// A SIGTERM/SIGHUP mid-pick would otherwise leave the terminal in raw
+	// mode with the cursor hidden (the defers above never run). Restore
+	// the terminal, then re-raise so the process still dies with the
+	// conventional signal status. Stopped (and the goroutine released) on
+	// normal return.
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	go func() {
+		s, open := <-sigc
+		if !open {
+			return
+		}
+		_ = term.Restore(inFD, oldState)
+		fmt.Fprint(out, "\x1b[?25h")
+		signal.Stop(sigc)
+		// Re-raise so the process dies with the conventional signal
+		// status (portable: best-effort no-op where unsupported).
+		if p, perr := os.FindProcess(os.Getpid()); perr == nil {
+			_ = p.Signal(s)
+		}
+		os.Exit(1)
+	}()
+	defer func() {
+		signal.Stop(sigc)
+		close(sigc)
+	}()
+
 	query := seed
 	selected := 0
+	top := 0
 	rowsDrawn := 0
 
 	eraseFrame := func() {
@@ -68,10 +98,26 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 		if selected < 0 {
 			selected = 0
 		}
-		visible := filtered
-		if len(visible) > pickerVisibleRows {
-			visible = visible[:pickerVisibleRows]
+		// Slide the window so the selection stays on screen: scroll up
+		// when it moves above `top`, down when it passes the last visible
+		// row, and clamp to the list bounds.
+		if selected < top {
+			top = selected
 		}
+		if selected >= top+pickerVisibleRows {
+			top = selected - pickerVisibleRows + 1
+		}
+		if top > len(filtered)-pickerVisibleRows {
+			top = len(filtered) - pickerVisibleRows
+		}
+		if top < 0 {
+			top = 0
+		}
+		end := top + pickerVisibleRows
+		if end > len(filtered) {
+			end = len(filtered)
+		}
+		visible := filtered[top:end]
 		idLen := 0
 		for _, it := range visible {
 			if len(it.ID) > idLen {
@@ -87,8 +133,13 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 		if len(visible) == 0 {
 			b.WriteString("  \x1b[2m(no matches — type to filter, esc to cancel)\x1b[0m\x1b[K\n\r")
 		}
+		extraRows := 0
+		if top > 0 {
+			b.WriteString(fmt.Sprintf("  \x1b[2m↑ %d more above\x1b[0m\x1b[K\n\r", top))
+			extraRows++
+		}
 		for i, it := range visible {
-			if i == selected {
+			if top+i == selected {
 				b.WriteString("\x1b[7m▸ ")
 			} else {
 				b.WriteString("  ")
@@ -100,7 +151,7 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 			b.WriteString(it.ID)
 			b.WriteString(strings.Repeat(" ", pad))
 			if it.Meta != "" {
-				if i == selected {
+				if top+i == selected {
 					b.WriteString("  ")
 					b.WriteString(it.Meta)
 				} else {
@@ -110,6 +161,10 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 			}
 			b.WriteString("\x1b[0m\x1b[K\n\r")
 		}
+		if below := len(filtered) - end; below > 0 {
+			b.WriteString(fmt.Sprintf("  \x1b[2m↓ %d more below\x1b[0m\x1b[K\n\r", below))
+			extraRows++
+		}
 		hint := fmt.Sprintf("\x1b[2m  %d match", len(filtered))
 		if len(filtered) != 1 {
 			hint += "es"
@@ -118,7 +173,7 @@ func pickFromList(prompt string, items []pickerItem, seed string) string {
 		b.WriteString(hint)
 
 		fmt.Fprint(out, b.String())
-		rowsDrawn = 1 + maxInt(1, len(visible)) + 1
+		rowsDrawn = 1 + maxInt(1, len(visible)) + extraRows + 1
 	}
 
 	draw()

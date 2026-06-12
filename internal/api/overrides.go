@@ -170,6 +170,9 @@ func overrideAuditMetaWithReq(ctx context.Context, keyID string, o router.Overri
 	return "{" + strings.Join(parts, ",") + "}"
 }
 
+// kv renders one JSON object member. Key and value go through
+// jsonQuote so client-controlled strings (model ids, fallback lists)
+// can't inject extra JSON into the audit metadata.
 func kv(k, v string) string {
-	return `"` + k + `":"` + v + `"`
+	return jsonQuote(k) + ":" + jsonQuote(v)
 }

@@ -2,7 +2,7 @@
 
 Flock's cross-node routing has automated coverage via `internal/controlplane/two_node_e2e_test.go` (an in-process register / heartbeat / placement-reconciliation simulation). This document is for the **real-hardware** verification: two physical machines, one network, end-to-end inference.
 
-Once you've walked through this checklist successfully **on two physical machines**, you can remove the "not yet tested with two physical machines" caveat from README:155.
+The README's Status row already reflects this path (single-node verified end-to-end; real two-machine verification via this walkthrough + the smoke script). Walking the checklist on your own hardware confirms it holds for your setup.
 
 ## tl;dr — run the smoke script
 
@@ -165,7 +165,6 @@ On the worker, re-run the `flock join` command. After one heartbeat:
 
 Once you've completed steps 1–7 successfully on real hardware:
 
-1. Open a PR removing the "not yet tested with two physical machines" caveat from `README.md` (currently around line 155).
-2. In the PR description, list the two machines you used (OS + arch + RAM) so we capture the actual verified matrix.
+1. Open an issue (or PR against this doc) noting the run, listing the two machines you used (OS + arch + RAM) so we capture the actual verified matrix.
 
 If something *did* break, open an issue with the relevant transcript and the `flock doctor` output from both machines.

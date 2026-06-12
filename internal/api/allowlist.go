@@ -74,6 +74,22 @@ func ModelAllowMiddleware(st store.Store) func(http.Handler) http.Handler {
 	}
 }
 
+// modelAllowedForKey re-checks the per-key allowlist against `model`
+// using the API key on ctx. Handlers call this after default/auto
+// substitution — ModelAllowMiddleware only sees the model the client
+// actually sent, so an omitted model would otherwise bypass the
+// allowlist via the configured default. A `:floor`/`:nitro` routing
+// suffix is stripped first, consistent with the middleware. Returns
+// true when no key (or no restriction) is attached.
+func modelAllowedForKey(ctx context.Context, model string) bool {
+	key := auth.KeyFrom(ctx)
+	if key == nil || key.AllowedModels == nil {
+		return true
+	}
+	model, _ = models.SplitSortSuffix(model)
+	return ModelAllowed(key.AllowedModels, model)
+}
+
 // ModelAllowed reports whether `model` matches any entry in `allowed`.
 // An entry may be a literal id or a `*`-suffixed glob (e.g. `claude-*`).
 // A nil allowed slice means "no restriction" — the caller is expected

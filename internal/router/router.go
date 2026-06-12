@@ -150,7 +150,24 @@ type Router struct {
 	cooldowns   map[string]time.Time      // node_id → time the node leaves the penalty box
 	failures    map[string]int            // node_id → consecutive recent failures
 	stickiness  map[string]stickyEntry    // user_id|model → pinned node + expiry
+
+	// stickyInserts counts rememberSticky calls so the map can be swept
+	// of expired entries opportunistically (every stickySweepEvery-th
+	// insert, or whenever the map outgrows stickySweepThreshold).
+	// Stickiness otherwise only deletes lazily in stickyPick, which
+	// never fires for one-shot users — the map would grow unboundedly.
+	stickyInserts int
 }
+
+// stickySweepEvery and stickySweepThreshold tune the opportunistic
+// expired-entry sweep in rememberSticky. The sweep is O(map) under the
+// write lock, so it runs at most once per stickySweepEvery inserts —
+// unless the map has already grown past stickySweepThreshold, in which
+// case it runs on every insert until expiry brings it back down.
+const (
+	stickySweepEvery     = 256
+	stickySweepThreshold = 4096
+)
 
 // stickyEntry is one row of the per-(user_id, model) pin table.
 type stickyEntry struct {
@@ -601,6 +618,17 @@ func (r *Router) rememberSticky(ctx context.Context, model, nodeID string) {
 	key := userID + "|" + model
 	r.mu.Lock()
 	r.stickiness[key] = stickyEntry{NodeID: nodeID, ExpiresAt: time.Now().Add(r.stickyTTL)}
+	r.stickyInserts++
+	// Opportunistic sweep: stickyPick only deletes the entry it looked
+	// up, so pins for users who never return would accumulate forever.
+	if r.stickyInserts%stickySweepEvery == 0 || len(r.stickiness) > stickySweepThreshold {
+		now := time.Now()
+		for k, e := range r.stickiness {
+			if now.After(e.ExpiresAt) {
+				delete(r.stickiness, k)
+			}
+		}
+	}
 	r.mu.Unlock()
 }
 
@@ -998,52 +1026,80 @@ func (r *Router) chatHedged(ctx context.Context, req engines.ChatRequest, replic
 	span.SetAttributes(attribute.Int("flock.hedge.candidates", len(candidates)))
 
 	type result struct {
+		idx    int
 		stream <-chan engines.StreamEvent
 		cancel context.CancelFunc
 		nodeID string
 		err    error
 	}
 	resultCh := make(chan result, len(candidates))
-	for _, w := range candidates {
-		w := w
+	// Per-replica cancels live outside the goroutines so the winner path
+	// can cancel the still-running losers immediately instead of waiting
+	// for them to come back on resultCh.
+	cancels := make([]context.CancelFunc, len(candidates))
+	for i, w := range candidates {
+		i, w := i, w
+		thisCtx, thisCancel := context.WithCancel(ctx)
+		cancels[i] = thisCancel
 		go func() {
-			thisCtx, thisCancel := context.WithCancel(ctx)
 			r.incInflight(w.nodeID, req.Model)
 			s, err := w.engine.Chat(thisCtx, req)
 			if err != nil {
 				thisCancel()
 				r.decInflight(w.nodeID, req.Model)
 			}
-			resultCh <- result{stream: s, cancel: thisCancel, nodeID: w.nodeID, err: err}
+			resultCh <- result{idx: i, stream: s, cancel: thisCancel, nodeID: w.nodeID, err: err}
 		}()
 	}
 
+	// Wait only until the FIRST success — a hung replica must not stall
+	// the request (cutting that tail is the whole point of hedging).
+	// Failures are tolerated until every replica has failed.
 	var winner result
 	var firstErr error
-	for i := 0; i < len(candidates); i++ {
+	failed := 0
+	for winner.stream == nil && failed < len(candidates) {
 		res := <-resultCh
 		if res.err != nil {
+			failed++
 			if firstErr == nil {
 				firstErr = res.err
 			}
 			metrics.ObserveRouterHedge("error")
 			continue
 		}
-		if winner.stream == nil {
-			winner = res
-			metrics.ObserveRouterHedge("win")
-			continue
-		}
-		// Late arrival — cancel + drain.
-		res.cancel()
-		r.decInflight(res.nodeID, req.Model)
-		metrics.ObserveRouterHedge("cancelled")
-		go drainWithTimeout(res.stream, 30*time.Second)
+		winner = res
+		metrics.ObserveRouterHedge("win")
 	}
 	if winner.stream == nil {
 		span.SetStatus(codes.Error, "all hedge replicas failed")
 		span.End()
 		return nil, firstErr
+	}
+	// Cancel the losers right away so they stop generating, then reap
+	// their results in the background. A loser whose stream opened still
+	// needs its inflight counter released and its buffered events
+	// drained — a cancelled producer closes its channel, so the drain
+	// terminates. Losers that fail decrement their own counter in the
+	// per-replica goroutine above.
+	for i, cancel := range cancels {
+		if i != winner.idx {
+			cancel()
+		}
+	}
+	if remaining := len(candidates) - failed - 1; remaining > 0 {
+		go func() {
+			for i := 0; i < remaining; i++ {
+				res := <-resultCh
+				if res.err != nil {
+					metrics.ObserveRouterHedge("error")
+					continue
+				}
+				r.decInflight(res.nodeID, req.Model)
+				metrics.ObserveRouterHedge("cancelled")
+				go drainWithTimeout(res.stream, 30*time.Second)
+			}
+		}()
 	}
 	span.SetAttributes(attribute.String("flock.hedge.winner", winner.nodeID))
 	span.SetStatus(codes.Ok, "hedge winner")
@@ -1298,6 +1354,37 @@ func (r *Router) InvalidateModel(modelID string) {
 	r.mu.Lock()
 	delete(r.remotes, "shard:"+modelID)
 	r.mu.Unlock()
+}
+
+// InvalidateNode drops all per-node router state for a deleted node: the
+// cached remote engine plus cooldown, failure, inflight, and sticky-pin
+// entries keyed by it. Called by the control plane when a node is removed
+// so a re-registered node (possibly at a new address / token) gets a
+// fresh engine instead of the stale cached one.
+func (r *Router) InvalidateNode(nodeID string) {
+	if nodeID == "" {
+		return
+	}
+	r.mu.Lock()
+	delete(r.remotes, nodeID)
+	delete(r.cooldowns, nodeID)
+	delete(r.failures, nodeID)
+	delete(r.inflight, nodeID)
+	prefix := nodeID + "|"
+	for k := range r.inflightDim {
+		if strings.HasPrefix(k, prefix) {
+			delete(r.inflightDim, k)
+		}
+	}
+	for k, e := range r.stickiness {
+		if e.NodeID == nodeID {
+			delete(r.stickiness, k)
+		}
+	}
+	cooldowns := len(r.cooldowns)
+	r.mu.Unlock()
+	metrics.SetRouterCooldownsActive(cooldowns)
+	metrics.SetRouterInflight(nodeID, 0)
 }
 
 func (r *Router) modelOnNode(ctx context.Context, nodeID, modelID string) (bool, error) {

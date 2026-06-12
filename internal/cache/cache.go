@@ -31,6 +31,9 @@ type Cache interface {
 	// DeleteNamespace clears every entry whose key starts with the
 	// given namespace prefix. Used by the admin endpoint.
 	DeleteNamespace(ctx context.Context, ns string)
+	// DeleteAll drops every cached entry regardless of namespace.
+	// Backs the admin endpoint's `?all=1` flush.
+	DeleteAll(ctx context.Context)
 	Stats() Stats
 	// Close stops any background goroutines (memory sweeper, sqlite
 	// reaper). Idempotent.

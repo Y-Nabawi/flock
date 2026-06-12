@@ -67,7 +67,13 @@ ok "admin auth works"
 
 # --- step 3: at least one worker registered ---
 nodes_json=$(curl -fsS -m "$TIMEOUT" "${H_ADMIN[@]}" "$LEADER/admin/v1/nodes")
-node_count=$(echo "$nodes_json" | tr ',' '\n' | grep -c '"id"' || true)
+if command -v jq >/dev/null 2>&1; then
+  node_count=$(echo "$nodes_json" | jq 'length')
+else
+  # Heuristic fallback when jq is absent: count object-opening "id" keys so
+  # nested ids and keys like "api_key_id" don't inflate the count.
+  node_count=$(echo "$nodes_json" | tr ',' '\n' | grep -c '{[[:space:]]*"id"[[:space:]]*:' || true)
+fi
 if [ "$node_count" -lt 2 ]; then
   die "leader sees $node_count node(s); need ≥2 (leader + at least one worker). Run \`flock join\` on the worker first." 3
 fi

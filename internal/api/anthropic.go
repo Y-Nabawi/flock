@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hadihonarvar/flock/internal/auth"
 	"github.com/hadihonarvar/flock/internal/engines"
 	"github.com/hadihonarvar/flock/internal/models"
 )
@@ -110,8 +111,24 @@ type anthropicUsage struct {
 func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
+	// Read the body so pre-call guardrails can inspect (or rewrite)
+	// it before we decode — same hook as the OpenAI handler, but the
+	// block response is written in the Anthropic error envelope. A
+	// rewrite replaces the whole body, so the rewritten Anthropic
+	// messages content is what gets decoded below.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "read body: "+err.Error())
+		return
+	}
+	rewritten, blockedBy, reason := evalPreCallGuardrails(r.Context(), h.Store, body)
+	if blockedBy != "" {
+		writeAnthropicGuardrailBlocked(w, blockedBy, reason)
+		return
+	}
+
 	var req anthropicRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(rewritten, &req); err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 		return
 	}
@@ -128,6 +145,15 @@ func (h *AnthropicHandler) Messages(w http.ResponseWriter, r *http.Request) {
 	requested, sortHint := models.SplitSortSuffix(req.Model)
 	if requested == "" {
 		requested = h.Default
+	}
+	// Re-check the per-key allowlist on the post-substitution model.
+	// ModelAllowMiddleware passes empty-model requests through, so the
+	// default must be authorized for this key too.
+	if !modelAllowedForKey(r.Context(), requested) {
+		key := auth.KeyFrom(r.Context())
+		auditRefusal(r.Context(), h.Store, key, requested)
+		writeModelNotAllowed(w, requested, key.AllowedModels)
+		return
 	}
 	resolved, err := h.ResolveModel(requested)
 	if err != nil {

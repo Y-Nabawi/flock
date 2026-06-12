@@ -25,25 +25,25 @@ func cmdUsage(args []string) {
 	bucket := fs.String("bucket", "day", "time bucket for --by: hour|day|month|total")
 	since := fs.String("since", "", "ISO date (YYYY-MM-DD) for --by — defaults to 30 days ago")
 	until := fs.String("until", "", "ISO date (YYYY-MM-DD) for --by — defaults to now")
-	fs.Usage = func() {
-		showHelp(helpSpec{
-			name:    "usage",
-			summary: "show recent inference usage records",
-			usage:   "flock usage [--limit N] [--user X] [--summary] [--json] | flock usage --by user,model --bucket day --since YYYY-MM-DD",
-			flags:   fs,
-			examples: []string{
-				"flock usage                                     # latest 50 records",
-				"flock usage --limit 200                         # latest 200",
-				"flock usage --user alice                        # filter by user",
-				"flock usage --summary                           # aggregate view (top models, p50/p95, error rate)",
-				"flock usage --by user --bucket day --since 2026-05-01      # per-user-per-day",
-				"flock usage --by model --bucket month                       # monthly per-model",
-				"flock usage --by user,model --bucket total --json           # totals, scriptable",
-			},
-		})
+	help := helpSpec{
+		name:    "usage",
+		summary: "show recent inference usage records",
+		usage:   "flock usage [--limit N] [--user X] [--summary] [--json] | flock usage --by user,model --bucket day --since YYYY-MM-DD",
+		flags:   fs,
+		examples: []string{
+			"flock usage                                     # latest 50 records",
+			"flock usage --limit 200                         # latest 200",
+			"flock usage --user alice                        # filter by user",
+			"flock usage --summary                           # aggregate view (top models, p50/p95, error rate)",
+			"flock usage --by user --bucket day --since 2026-05-01      # per-user-per-day",
+			"flock usage --by model --bucket month                       # monthly per-model",
+			"flock usage --by user,model --bucket total --json           # totals, scriptable",
+		},
 	}
+	// Bad flags: print usage to stderr and let ExitOnError exit 2.
+	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
-		fs.Usage()
+		showHelp(help)
 	}
 	_ = fs.Parse(args)
 

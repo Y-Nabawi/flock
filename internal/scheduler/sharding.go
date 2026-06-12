@@ -82,7 +82,10 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	if shardCount < 2 {
 		return fmt.Errorf("sharding requires at least 2 shards (got %d)", shardCount)
 	}
-	if entry.Source.Path == "" {
+	// source.type=huggingface entries resolve their path via auto-download
+	// below (ensureLocalGGUF); everything else must point at a GGUF already
+	// on disk.
+	if entry.Source.Type != "huggingface" && entry.Source.Path == "" {
 		return fmt.Errorf("sharded model %s requires source.path (local GGUF path)", entry.ID)
 	}
 
@@ -107,13 +110,19 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	// this is just source.path; for source.type=huggingface we download it
 	// from HF into storage.models_dir first (closes M5-T12 fully — no more
 	// "wget the GGUF before shard create").
+	//
+	// workerModelPaths records where the GGUF landed on each worker (keyed
+	// by node ID): if the coordinator ends up on a remote worker, its `-m`
+	// must use that worker's path, not the leader-local one.
+	var workerModelPaths map[string]string
 	if entry.Source.Type == "file" || entry.Source.Type == "huggingface" {
 		localPath, err := o.ensureLocalGGUF(ctx, entry)
 		if err != nil {
 			return fmt.Errorf("resolve GGUF on leader: %w", err)
 		}
 		// Then fan it out to every shard host (sha256-skip if already present).
-		if err := o.ensureGGUFOnAllWorkers(ctx, workers, localPath); err != nil {
+		workerModelPaths, err = o.ensureGGUFOnAllWorkers(ctx, workers, localPath)
+		if err != nil {
 			return fmt.Errorf("distribute GGUF: %w", err)
 		}
 		// Patch the path the coordinator will use so it points at the local
@@ -125,13 +134,31 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 	for i, w := range workers {
 		port := rpcPortBase + i
 		shardID := fmt.Sprintf("s-%s-rpc-%d", safeID(entry.ID), i)
+		wHost, _, sErr := net.SplitHostPort(w.Address)
+		if sErr != nil {
+			wHost = w.Address
+		}
+		// rpc-server speaks the unauthenticated llama.cpp RPC protocol, so
+		// bind it to the worker's advertised (mesh) address only — not every
+		// interface. Fall back to 0.0.0.0 only when the address is unknown.
+		rpcBind := wHost
+		if rpcBind == "" {
+			rpcBind = "0.0.0.0"
+			o.Log.Warn("worker address unknown — rpc-server binding 0.0.0.0 (unauthenticated RPC exposed on all interfaces)",
+				"node", w.ID, "port", port)
+		}
+		// Worker probes the same address rpc-server binds (loopback when we
+		// fell back to 0.0.0.0); the leader dials via the worker's address below.
+		healthHost := rpcBind
+		if rpcBind == "0.0.0.0" {
+			healthHost = "127.0.0.1"
+		}
 		spec := agent.ProcessSpec{
 			ID:         shardID,
 			Command:    "rpc-server",
-			Args:       []string{"-p", strconv.Itoa(port), "-H", "0.0.0.0"},
+			Args:       []string{"-p", strconv.Itoa(port), "-H", rpcBind},
 			HealthPort: port,
-			// Worker probes via 127.0.0.1; the leader will dial via worker's address below.
-			HealthHost: "127.0.0.1",
+			HealthHost: healthHost,
 			// If the rpc-server dies mid-stream the model goes unavailable —
 			// auto-restart up to 5 times (1s, 2s, 4s, 8s, 16s backoffs) so
 			// an admin doesn't have to re-run `flock shard create` for a
@@ -145,10 +172,6 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		if _, err := o.callWorkerStart(ctx, w, spec); err != nil {
 			o.rollback(ctx, created)
 			return fmt.Errorf("launch rpc on %s: %w", w.ID, err)
-		}
-		wHost, _, sErr := net.SplitHostPort(w.Address)
-		if sErr != nil {
-			wHost = w.Address
 		}
 		endpoint := fmt.Sprintf("%s:%d", wHost, port)
 		rpcEndpoints = append(rpcEndpoints, endpoint)
@@ -179,6 +202,18 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		// Worker coordinator must bind on the network so the leader can dial.
 		coordHostBind = "0.0.0.0"
 	}
+	// The `-m` path must be valid on the machine that runs the coordinator:
+	// leader-local path when it runs here, the worker's own path (reported
+	// during GGUF distribution) when it runs remotely.
+	coordModelPath := entry.Source.Path
+	if !coordHost.local {
+		if p, ok := workerModelPaths[coordHost.nodeID]; ok && p != "" {
+			coordModelPath = p
+		} else {
+			o.Log.Warn("no worker-side GGUF path known for coordinator host — falling back to leader-local path",
+				"node", coordHost.nodeID, "path", coordModelPath)
+		}
+	}
 	coordSpec := agent.ProcessSpec{
 		ID:      coordID,
 		Command: "llama-server",
@@ -189,7 +224,7 @@ func (o *Orchestrator) CreateSharded(ctx context.Context, entry models.Entry, sh
 		MaxRestarts:    5,
 		RestartBackoff: time.Second,
 		Args: []string{
-			"-m", entry.Source.Path,
+			"-m", coordModelPath,
 			"--rpc", strings.Join(rpcEndpoints, ","),
 			"--port", strconv.Itoa(coordPort),
 			"--host", coordHostBind,

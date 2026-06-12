@@ -132,14 +132,18 @@ func resolveToken(cfg *config.Config, override string) string {
 func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
+	sawTerminator := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		// `--` ends flag parsing; pass through verbatim.
+		// `--` ends flag parsing; everything after it is positional,
+		// verbatim, in order — after any positionals seen before it.
 		if a == "--" {
-			flags = append(flags, args[i:]...)
+			sawTerminator = true
+			positionals = append(positionals, args[i+1:]...)
 			break
 		}
-		if strings.HasPrefix(a, "-") {
+		// A lone "-" conventionally means stdin — a positional, not a flag.
+		if strings.HasPrefix(a, "-") && a != "-" {
 			flags = append(flags, a)
 			// --flag=value form: value is in the same token, no extra slot.
 			if strings.Contains(a, "=") {
@@ -154,6 +158,12 @@ func reorderFlagsFirst(args []string, valueFlags map[string]bool) []string {
 		} else {
 			positionals = append(positionals, a)
 		}
+	}
+	// Re-emit the terminator so the post-`--` args (and any pre-`--`
+	// positionals, which were positional anyway) keep literal protection:
+	// `pos1 --flag -- raw` → `--flag -- pos1 raw`.
+	if sawTerminator {
+		flags = append(flags, "--")
 	}
 	return append(flags, positionals...)
 }

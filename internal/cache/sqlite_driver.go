@@ -67,6 +67,10 @@ func (c *SQLite) DeleteNamespace(ctx context.Context, ns string) {
 	_ = c.backend.DeleteNamespace(ctx, ns)
 }
 
+func (c *SQLite) DeleteAll(ctx context.Context) {
+	_ = c.backend.DeleteAll(ctx)
+}
+
 func (c *SQLite) Stats() Stats {
 	n, b, _ := c.backend.Count(context.Background())
 	return Stats{

@@ -16,11 +16,15 @@ import (
 
 // Config is the full runtime configuration for a Flock node.
 type Config struct {
-	Listen        string              `yaml:"listen"`
-	ExternalURL   string              `yaml:"external_url"`
-	DataDir       string              `yaml:"data_dir"`
-	LogLevel      string              `yaml:"log_level"`
-	CatalogDir    string              `yaml:"catalog_dir"`
+	Listen      string `yaml:"listen"`
+	ExternalURL string `yaml:"external_url"`
+	DataDir     string `yaml:"data_dir"`
+	LogLevel    string `yaml:"log_level"`
+	CatalogDir  string `yaml:"catalog_dir"`
+	// MaxBodyBytes caps the request body size on the /v1/* API surface.
+	// 0 (default) uses the server's built-in 32 MiB ceiling. Env
+	// override: FLOCK_MAX_BODY_BYTES.
+	MaxBodyBytes  int64               `yaml:"max_body_bytes"`
 	Storage       StorageConfig       `yaml:"storage"`
 	Auth          AuthConfig          `yaml:"auth"`
 	Engine        EngineConfig        `yaml:"engine"`
@@ -246,6 +250,9 @@ func Default() *Config {
 // If path is empty, ~/.flock/config.yaml is tried.
 func Load(path string) (*Config, error) {
 	cfg := Default()
+	// Pristine copy of the defaults so we can tell "still the eagerly
+	// derived default" from "explicitly configured" after the overlays.
+	defaults := Default()
 
 	if path == "" {
 		path = filepath.Join(cfg.DataDir, "config.yaml")
@@ -260,6 +267,18 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(cfg)
+	// Default() derives storage paths from the default data dir eagerly,
+	// so a data_dir override (YAML or FLOCK_DATA_DIR) would otherwise
+	// leave them pointing at the old location. Re-derive any storage
+	// path that wasn't itself overridden from the final DataDir.
+	if cfg.DataDir != defaults.DataDir {
+		if cfg.Storage.DSN == defaults.Storage.DSN {
+			cfg.Storage.DSN = filepath.Join(cfg.DataDir, "state.db")
+		}
+		if cfg.Storage.ModelsDir == defaults.Storage.ModelsDir {
+			cfg.Storage.ModelsDir = filepath.Join(cfg.DataDir, "models")
+		}
+	}
 	expand(cfg)
 
 	if err := ensureDirs(cfg); err != nil {
@@ -289,6 +308,14 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FLOCK_DATA_DIR"); v != "" {
 		c.DataDir = v
+	}
+	if v := os.Getenv("FLOCK_STORAGE_DSN"); v != "" {
+		c.Storage.DSN = v
+	}
+	if v := os.Getenv("FLOCK_MAX_BODY_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			c.MaxBodyBytes = n
+		}
 	}
 	if v := os.Getenv("FLOCK_LOG_LEVEL"); v != "" {
 		c.LogLevel = v

@@ -143,11 +143,9 @@ func extractKey(r *http.Request) (string, bool) {
 		}
 		return h, true
 	}
+	// Anthropic-style header. Header.Get canonicalizes the name, so this
+	// single lookup matches `x-api-key`, `X-Api-Key`, and friends.
 	if h := r.Header.Get("X-Api-Key"); h != "" {
-		return h, true
-	}
-	// Anthropic-style header
-	if h := r.Header.Get("x-api-key"); h != "" {
 		return h, true
 	}
 	// Query parameter for endpoints that browsers can't open with custom

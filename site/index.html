@@ -147,7 +147,7 @@
       <div class="max-w-6xl mx-auto px-6 py-20 md:py-28">
         <div class="max-w-3xl">
           <div class="flex flex-wrap gap-2">
-            <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">v0.21.0</span>
+            <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">v1.20.1</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">100% free</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">open source · Apache-2.0</span>
             <span class="pill bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">no telemetry</span>
@@ -641,7 +641,7 @@ flock up          <span class="text-slate-500"># starts your private LLM gateway
               <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock model add &lt;id&gt;</span> for catalog models.
               <span class="font-mono text-xs bg-slate-200 px-1.5 py-0.5 rounded">flock model add hf:owner/repo</span> for anything else on HuggingFace.
               No hand-written YAML, no manual GGUF downloads, no per-worker setup. Engine, quant, and shard count are picked for you from your hardware
-              (<a href="https://github.com/hadihonarvar/flock/blob/main/TASKS.md#easy-model-switching-track-m4-t16--m4-t20" class="text-emerald-600 hover:text-emerald-700 underline">M4-T16 → M4-T20</a>, landing v0.5).
+              (<a href="https://github.com/hadihonarvar/flock/blob/main/TASKS.md#easy-model-switching-track-m4-t16--m4-t20" class="text-emerald-600 hover:text-emerald-700 underline">M4-T16 → M4-T20</a> — shipped).
             </p>
           </div>
           <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
@@ -800,7 +800,7 @@ $ curl http://localhost:8080/v1/chat/completions \
                   <tr><td class="p-3 font-mono text-xs">llama-3.2-1b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:llama3.2:1b</td><td class="p-3">1.3 GB</td><td class="p-3 text-xs text-slate-500">2 days ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
                   <tr><td class="p-3 font-mono text-xs">qwen-coder-7b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:qwen2.5-coder:7b</td><td class="p-3">4.7 GB</td><td class="p-3 text-xs text-slate-500">1 day ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
                   <tr><td class="p-3 font-mono text-xs">qwen-coder-14b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">ollama:qwen2.5-coder:14b</td><td class="p-3">9.0 GB</td><td class="p-3 text-xs text-slate-500">3 hours ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
-                  <tr><td class="p-3 font-mono text-xs">qwen3-72b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">vllm:Qwen/Qwen3-72B-Instruct-AWQ</td><td class="p-3">42 GB</td><td class="p-3 text-xs text-slate-500">just now</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
+                  <tr><td class="p-3 font-mono text-xs">qwen3-30b</td><td class="p-3"><span class="pill bg-emerald-100 text-emerald-700">ready</span></td><td class="p-3 font-mono text-xs">vllm:Qwen/Qwen3-30B-A3B</td><td class="p-3">19 GB</td><td class="p-3 text-xs text-slate-500">just now</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
                   <tr><td class="p-3 font-mono text-xs">llama-3.3-70b-sharded</td><td class="p-3"><span class="pill bg-blue-100 text-blue-700">sharded</span></td><td class="p-3 font-mono text-xs">llamacpp:/var/lib/flock/…q4_k_m.gguf</td><td class="p-3">42 GB</td><td class="p-3 text-xs text-slate-500">5 min ago</td><td class="p-3 text-xs"><a class="text-red-600">remove</a></td></tr>
                 </tbody>
               </table>
@@ -1290,7 +1290,7 @@ claude</pre>
 
           <div class="border border-slate-200 rounded-lg p-5">
             <div class="text-sm font-semibold mb-2">☁️ Bedrock + Vertex egress</div>
-            <p class="text-sm text-slate-600 leading-relaxed">Set <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_BEDROCK_REGION</code> and <code>anthropic.*</code> model IDs are signed via real SigV4 (aws-sdk-go-v2). <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_VERTEX_PROJECT</code> wires the ADC auth probe for <code>gemini-*</code>. Body translation lands in v0.7.</p>
+            <p class="text-sm text-slate-600 leading-relaxed">Set <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_BEDROCK_REGION</code> and <code>anthropic.*</code> model IDs are signed via real SigV4 (aws-sdk-go-v2). <code class="font-mono text-xs bg-slate-100 px-1 rounded">FLOCK_VERTEX_PROJECT</code> wires the ADC auth probe for <code>gemini-*</code>. Body translation for the remaining model families is planned.</p>
           </div>
 
           <div class="border border-slate-200 rounded-lg p-5">
@@ -1767,7 +1767,7 @@ ANTHROPIC_MODEL=llama-3.2-1b</pre>
             <ul class="space-y-2 text-sm text-amber-900">
               <li><strong>Worker tokens</strong> are stored plaintext in <code>nodes.worker_token</code> on the leader's SQLite</li>
               <li>Anyone with read access to the leader's DB can impersonate a worker</li>
-              <li>HMAC-based mutual auth is on the v0.5 roadmap</li>
+              <li>HMAC-SHA256 mutual auth between leader and workers is <strong>shipped</strong> — signatures travel instead of tokens; set <code>FLOCK_REJECT_BEARER=1</code> on workers to require it</li>
               <li><strong>For hostile networks</strong> run the cluster behind Tailscale or a zero-trust overlay</li>
             </ul>
           </div>

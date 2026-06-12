@@ -294,7 +294,11 @@ var _ Engine = (*VLLM)(nil)
 // TracerProvider isn't set (FLOCK_OTLP_ENDPOINT unset), so this path
 // has zero overhead in the default config.
 func consumeOpenAIStreamWithSpan(ctx context.Context, body io.ReadCloser, out chan<- StreamEvent, span *chatSpan) {
+	// Single close point: every exit path (drained, ctx cancelled) must
+	// close `out` — consumers drain with a bare `for range`, so a missed
+	// close leaks their goroutine permanently.
 	defer span.End()
+	defer close(out)
 	intermediate := make(chan StreamEvent, 16)
 	go consumeOpenAIStream(ctx, body, intermediate)
 	var promptTokens, completionTokens int
@@ -316,5 +320,4 @@ func consumeOpenAIStreamWithSpan(ctx context.Context, body io.ReadCloser, out ch
 		}
 	}
 	span.SetTokens(promptTokens, completionTokens)
-	close(out)
 }

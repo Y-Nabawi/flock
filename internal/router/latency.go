@@ -134,7 +134,7 @@ func (s *latencyStats) p95(model string) time.Duration {
 	}
 	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
 	// 95th percentile by nearest-rank: ceil(0.95 * N) - 1 (0-indexed).
-	idx := (95*len(xs))/100 - 1
+	idx := (95*len(xs)+99)/100 - 1
 	if idx < 0 {
 		idx = 0
 	}

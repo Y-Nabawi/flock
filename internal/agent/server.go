@@ -11,6 +11,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -112,7 +113,11 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		if strings.HasPrefix(got, "Bearer ") {
 			got = strings.TrimPrefix(got, "Bearer ")
 		}
-		if got != s.Token {
+		// Constant-time compare so response timing can't leak how much of
+		// the token an attacker has guessed. s.Token is non-empty here (the
+		// empty case 401s at the top), so the length-leak on mismatched
+		// sizes reveals nothing useful.
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.Token)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -394,9 +399,10 @@ func (s *Server) fileCheck(w http.ResponseWriter, r *http.Request) {
 //	422     {"error": "sha mismatch: got X want Y"}
 //	503     if no ModelsDir is configured
 //
-// The file is written to a `.partial` sibling first and renamed on success,
+// The file is written to a unique temp sibling first and renamed on success,
 // so an interrupted upload doesn't leave a partial file the leader might
-// see and skip on the next check.
+// see and skip on the next check, and two concurrent uploads of the same
+// name can't interleave writes into a shared temp path.
 func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
 	if s.ModelsDir == "" {
 		http.Error(w, "worker has no models_dir configured", http.StatusServiceUnavailable)
@@ -419,13 +425,18 @@ func (s *Server) fileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	finalPath := filepath.Join(s.ModelsDir, name)
-	tmpPath := finalPath + ".partial"
-	out, err := os.Create(tmpPath)
+	// Unique temp file per request: concurrent uploads of the same name must
+	// not share one partial path, or they'd corrupt each other. Renamed over
+	// finalPath only after the sha check passes.
+	out, err := os.CreateTemp(s.ModelsDir, name+".partial-*")
 	if err != nil {
 		http.Error(w, "create: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	tmpPath := out.Name()
 
+	// No size cap on purpose: multi-GB GGUF uploads are the feature, and the
+	// endpoint is token-gated.
 	h := sha256.New()
 	n, copyErr := io.Copy(io.MultiWriter(out, h), r.Body)
 	closeErr := out.Close()

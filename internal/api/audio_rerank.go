@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/hadihonarvar/flock/internal/metrics"
 )
 
 // RerankAudioConfig is the small slice of operator config the
@@ -48,6 +46,13 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "read body: "+err.Error())
 		return
 	}
+	// Pre-call guardrails apply here too — the rerank body (query +
+	// documents) is plain text, and a rewrite replaces what we forward.
+	body, ok := applyPreCallGuardrails(r.Context(), w, h.Store, body)
+	if !ok {
+		// Guardrail blocked the request; response already written.
+		return
+	}
 	model := peekRequestedModel(body)
 	endpoint := globalRerankAudioConfig.LlamaCppEndpoint
 	if endpoint == "" {
@@ -83,7 +88,6 @@ func (h *Handler) Rerank(w http.ResponseWriter, r *http.Request) {
 		outcome = "error"
 	}
 	recordUsage(r.Context(), h.Store, "rerank", model, nil, time.Since(start), outcome)
-	metrics.ObserveRequest(model, "rerank", outcome, time.Since(start), 0, 0)
 }
 
 // AudioTranscriptions handles POST /v1/audio/transcriptions. Today it
@@ -120,6 +124,10 @@ func (h *Handler) AudioSpeech(w http.ResponseWriter, r *http.Request) {
 // whisper-server and piper-server respect the OpenAI-compatible
 // shapes (multipart form for transcriptions, JSON body returning
 // audio bytes for speech).
+//
+// Pre-call guardrails intentionally don't apply here: the bodies are
+// multipart/binary audio (potentially megabytes), not the JSON text
+// the guardrail hook's contract inspects or rewrites.
 func (h *Handler) proxyAudio(w http.ResponseWriter, r *http.Request, endpoint, path, protocol string) {
 	defer r.Body.Close()
 	start := time.Now()
@@ -162,7 +170,6 @@ func (h *Handler) proxyAudio(w http.ResponseWriter, r *http.Request, endpoint, p
 	// megabytes. Trade-off: usage rows for audio carry an empty
 	// model id today — operators can grep by protocol.
 	recordUsage(r.Context(), h.Store, protocol, "", nil, time.Since(start), outcome)
-	metrics.ObserveRequest("", protocol, outcome, time.Since(start), 0, 0)
 }
 
 // ensure json import sticks around for future structured responses.

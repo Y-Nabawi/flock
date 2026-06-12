@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Flock is pre-1.0. Security fixes ship on `main` and in the most recent minor release. Older minor releases are not patched.
+Flock auto-releases from `main` on every `feat:` / `fix:` commit (current stream: v1.x). Security fixes ship on `main` and land in the next auto-cut release. Older releases are not patched — upgrade with `flock update`.
 
 | Version | Supported |
 |---------|-----------|
 | `main`  | ✅ |
-| Latest tagged minor | ✅ |
+| Latest tagged release | ✅ |
 | Older  | ❌ |
 
 ## Reporting a vulnerability
@@ -36,7 +36,7 @@ We coordinate disclosure timing with reporters when possible.
 In scope:
 
 - The `flock` binary and all code in this repository
-- Official Docker images we publish
+- Release artifacts we publish on GitHub Releases (binaries, `.deb` / `.rpm` packages, `checksums.txt`)
 - Pre-built install scripts hosted at `raw.githubusercontent.com/hadihonarvar/flock/main/installer/install.sh`
 
 Out of scope:

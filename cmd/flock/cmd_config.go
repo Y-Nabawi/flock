@@ -6,8 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/hadihonarvar/flock/internal/config"
 )
 
 // cmdConfig shows the effective runtime config (secrets redacted) and
@@ -15,7 +18,7 @@ import (
 //
 //	flock config show       # default
 //	flock config path       # print the config file path
-//	flock config edit       # open in $EDITOR
+//	flock config edit       # print the $EDITOR command to edit the config
 func cmdConfig(args []string) {
 	if wantsHelp(args) {
 		showHelp(helpSpec{
@@ -40,19 +43,27 @@ func cmdConfig(args []string) {
 	case "show":
 		configShow(args[1:])
 	case "path":
-		cfg := loadConfigOrExit()
-		fmt.Println(cfg.DataDir + "/config.yaml")
+		fmt.Println(loadedConfigPath())
 	case "edit":
-		cfg := loadConfigOrExit()
 		editor := os.Getenv("EDITOR")
 		if editor == "" {
 			editor = "vi"
 		}
-		fmt.Printf("Run: %s %s/config.yaml\n", editor, cfg.DataDir)
+		fmt.Printf("Run: %s %s\n", editor, loadedConfigPath())
 		fmt.Println("(then restart flock for changes to take effect)")
 	default:
 		die("unknown subcommand: config %s (try show|path|edit)", args[0])
 	}
+}
+
+// loadedConfigPath returns the path config.Load("") actually read.
+// The loader resolves the file from the DEFAULT data dir BEFORE applying
+// yaml/env overrides, so cfg.DataDir post-load (e.g. with `data_dir:`
+// set in the file, or FLOCK_DATA_DIR in the env) can point at a
+// directory whose config.yaml was never opened. Replicate the loader's
+// resolution instead of deriving the path from the loaded config.
+func loadedConfigPath() string {
+	return filepath.Join(config.Default().DataDir, "config.yaml")
 }
 
 func configShow(args []string) {

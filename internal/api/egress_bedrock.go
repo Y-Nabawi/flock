@@ -30,7 +30,7 @@ func loadBedrockClient(ctx context.Context, region string) (*bedrockruntime.Clie
 	case brClientOnce <- struct{}{}:
 		defer func() { <-brClientOnce }()
 		if brClient != nil {
-			return brClient, brErr
+			return brClient, nil
 		}
 		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 		if err != nil {
@@ -38,6 +38,9 @@ func loadBedrockClient(ctx context.Context, region string) (*bedrockruntime.Clie
 			return nil, brErr
 		}
 		brClient = bedrockruntime.NewFromConfig(cfg)
+		// Clear any error left over from an earlier failed attempt so a
+		// later success doesn't keep returning the stale error.
+		brErr = nil
 		return brClient, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -181,7 +184,10 @@ var (
 		return ""
 	}
 	osStat = func(p string) bool {
-		_, err := openForRead(p)
+		rc, err := openForRead(p)
+		if rc != nil {
+			_ = rc.Close()
+		}
 		return err == nil
 	}
 )

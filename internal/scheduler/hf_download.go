@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/models"
@@ -44,15 +46,29 @@ func (o *Orchestrator) ensureLocalGGUF(ctx context.Context, entry models.Entry) 
 		if entry.Source.Repo == "" || entry.Source.File == "" {
 			return "", fmt.Errorf("catalog %s: source.type=huggingface requires both source.repo and source.file for auto-download", entry.ID)
 		}
+		// source.file is joined into ModelsDir and interpolated into the
+		// download URL, so a path-y value could escape either. Mirror the
+		// basename-only rule the worker upload endpoint enforces.
+		if f := entry.Source.File; f == "." || strings.Contains(f, "..") ||
+			strings.ContainsAny(f, "/\\") || filepath.Base(f) != f {
+			return "", fmt.Errorf("catalog %s: source.file %q must be a bare filename (no path separators or ..)", entry.ID, f)
+		}
 		if o.ModelsDir == "" {
 			return "", fmt.Errorf("catalog %s wants HF auto-download but Orchestrator.ModelsDir is unset; configure storage.models_dir or pre-place at source.path with type=file", entry.ID)
 		}
 		target := filepath.Join(o.ModelsDir, entry.Source.File)
-		// Already present? Skip the multi-GB pull.
+		// Already present? Skip the multi-GB pull — but only when the local
+		// size matches what HF says it should be, so a previously truncated
+		// download isn't trusted forever.
 		if st, err := os.Stat(target); err == nil && st.Size() > 0 {
-			o.Log.Info("gguf already on leader — skipping HF download",
-				"id", entry.ID, "path", target, "size", st.Size())
-			return target, nil
+			if want, ok := o.hfExpectedSize(ctx, hfURL(entry)); ok && want != st.Size() {
+				o.Log.Warn("local gguf size differs from huggingface — re-downloading",
+					"id", entry.ID, "path", target, "local_bytes", st.Size(), "remote_bytes", want)
+			} else {
+				o.Log.Info("gguf already on leader — skipping HF download",
+					"id", entry.ID, "path", target, "size", st.Size())
+				return target, nil
+			}
 		}
 		if err := o.downloadFromHF(ctx, entry, target); err != nil {
 			return "", err
@@ -64,6 +80,37 @@ func (o *Orchestrator) ensureLocalGGUF(ctx context.Context, entry models.Entry) 
 	}
 }
 
+// hfURL builds the resolve URL for an entry's GGUF. source.file is
+// path-escaped — it's validated as a bare filename by ensureLocalGGUF, but
+// escape anyway so odd characters can't alter the URL path.
+func hfURL(entry models.Entry) string {
+	return fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s",
+		entry.Source.Repo, url.PathEscape(entry.Source.File))
+}
+
+// hfExpectedSize asks HF (HEAD) how big the file should be, so the
+// "already downloaded" fast path can detect truncated local copies.
+// Returns ok=false when HEAD fails or reports no usable length; the
+// caller keeps the fast path in that case.
+func (o *Orchestrator) hfExpectedSize(ctx context.Context, fileURL string) (int64, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, fileURL, nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := o.HTTP.Do(req)
+	if err != nil {
+		o.Log.Debug("HEAD for expected gguf size failed — trusting local copy", "url", fileURL, "err", err)
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.ContentLength <= 0 {
+		o.Log.Debug("HEAD for expected gguf size unusable — trusting local copy",
+			"url", fileURL, "status", resp.Status, "content_length", resp.ContentLength)
+		return 0, false
+	}
+	return resp.ContentLength, true
+}
+
 // downloadFromHF streams a single GGUF from HuggingFace to target, writing
 // to a .partial sibling and renaming on success so an interrupted download
 // doesn't leave a half-file the next caller might mistake for complete.
@@ -71,8 +118,7 @@ func (o *Orchestrator) downloadFromHF(ctx context.Context, entry models.Entry, t
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(target), err)
 	}
-	url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s",
-		entry.Source.Repo, entry.Source.File)
+	url := hfURL(entry)
 
 	// Use a per-download HTTP client with a much longer timeout than
 	// o.HTTP (which is 60s, fine for control-plane calls but not for a

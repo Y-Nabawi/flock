@@ -16,25 +16,25 @@ import (
 func cmdDown(args []string) {
 	fs := flag.NewFlagSet("down", flag.ExitOnError)
 	noUnload := fs.Bool("no-unload", false, "leave models resident in the engine's memory (skip the default unload)")
-	fs.Usage = func() {
-		showHelp(helpSpec{
-			name:    "down",
-			summary: "stop the local flock node and release engine memory",
-			usage:   "flock down [--no-unload]",
-			flags:   fs,
-			examples: []string{
-				"flock down              # stop + unload models from engine RAM",
-				"flock down --no-unload  # stop only; models stay resident (Ollama TTL applies)",
-			},
-			notes: []string{
-				"`down` is a deliberate teardown, so it unloads resident models by default.",
-				"Ctrl-C of `flock up` does NOT unload (fast dev restarts) — use --unload-on-exit there.",
-				"Engines without an unload protocol (vLLM, MLX-LM) are skipped with a note; Flock-spawned llama-server processes are killed by `flock up`'s own shutdown.",
-			},
-		})
+	help := helpSpec{
+		name:    "down",
+		summary: "stop the local flock node and release engine memory",
+		usage:   "flock down [--no-unload]",
+		flags:   fs,
+		examples: []string{
+			"flock down              # stop + unload models from engine RAM",
+			"flock down --no-unload  # stop only; models stay resident (Ollama TTL applies)",
+		},
+		notes: []string{
+			"`down` is a deliberate teardown, so it unloads resident models by default.",
+			"Ctrl-C of `flock up` does NOT unload (fast dev restarts) — use --unload-on-exit there.",
+			"Engines without an unload protocol (vLLM, MLX-LM) are skipped with a note; Flock-spawned llama-server processes are killed by `flock up`'s own shutdown.",
+		},
 	}
+	// Bad flags: print usage to stderr and let ExitOnError exit 2.
+	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
-		fs.Usage()
+		showHelp(help)
 	}
 	_ = fs.Parse(args)
 
@@ -48,6 +48,13 @@ func cmdDown(args []string) {
 		die("find process %d: %v", pid, err)
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		// Process already gone (crashed, killed, rebooted) — the PID file
+		// is stale. Clean it up so the next `flock down` / `flock up`
+		// doesn't trip over it, and say so instead of a raw signal error.
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			removePID(cfg)
+			die("process %d is not running — removed stale PID file %s", pid, pidFilePath(cfg))
+		}
 		die("signal pid %d: %v", pid, err)
 	}
 	ok(os.Stdout, "sent SIGTERM to pid %d", pid)

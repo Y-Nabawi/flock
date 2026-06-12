@@ -141,14 +141,18 @@ func (p *progressBar) update(status string, completed, total int64) {
 			if filled > barWidth {
 				filled = barWidth
 			}
-			bar = "[" + green(strings.Repeat("█", filled)) + dim(strings.Repeat("░", barWidth-filled)) + "]"
+			// The bar draws on stderr, so its color gate must be stderr's,
+			// not stdout's (`flock model add … > log` keeps the colors;
+			// `2> log` drops them).
+			bar = "[" + greenErr(strings.Repeat("█", filled)) + dimErr(strings.Repeat("░", barWidth-filled)) + "]"
 		}
 	}
 
 	line := left + bar + right
 	// Only truncate when colors are off — otherwise ANSI escape bytes
-	// inflate len(line) and we'd slice into an escape sequence.
-	if !colorEnabled && len(line) > p.width {
+	// inflate len(line) and we'd slice into an escape sequence. The line
+	// goes to stderr, so consult stderr's color switch.
+	if !colorEnabledStderr && len(line) > p.width {
 		line = line[:p.width]
 	}
 	fmt.Fprintf(os.Stderr, "\r\x1b[K%s", line)

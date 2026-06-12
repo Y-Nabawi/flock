@@ -109,6 +109,30 @@ let currentView = "dashboard";
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// esc neutralizes a value for interpolation into HTML (element text or
+// double-quoted attributes). Every API-derived string must pass through
+// here before landing in an innerHTML template — the admin key lives in
+// this page, so any stored XSS is an admin takeover.
+function esc(v) {
+  if (v == null) return "";
+  return String(v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// escJS prepares a value for a JS string literal inside an inline
+// handler attribute (onclick="fn('…')"): escape for the JS string first
+// (backslash + both quotes), then HTML-escape so the value can't break
+// out of either context. The browser HTML-decodes the attribute before
+// the JS engine parses it, so the order here matters.
+function escJS(v) {
+  if (v == null) return "";
+  return esc(String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"'));
+}
+
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     ...opts,
@@ -165,7 +189,7 @@ function _modal({ title, contentHTML, confirmLabel = "OK", cancelLabel = "Cancel
     wrap.innerHTML = `
       <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
         <div class="flex justify-between items-start mb-3">
-          <div class="text-lg font-semibold">${title}</div>
+          <div class="text-lg font-semibold">${esc(title)}</div>
           <button type="button" data-act="cancel" class="text-slate-400 hover:text-slate-700 text-xl leading-none">✕</button>
         </div>
         <div class="text-sm text-slate-700 mb-4">${contentHTML}</div>
@@ -225,7 +249,7 @@ async function flockPrompt({ title, body, value = "", placeholder = "", confirmL
   const inputID = "modalInput_" + Math.random().toString(36).slice(2);
   const contentHTML = `
     <div>${body || ""}</div>
-    <input id="${inputID}" type="text" value="${(value || "").replace(/"/g, "&quot;")}" placeholder="${placeholder}"
+    <input id="${inputID}" type="text" value="${esc(value || "")}" placeholder="${esc(placeholder)}"
            class="mt-3 w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />
     <div id="${inputID}_err" class="hidden mt-2 text-xs text-red-600"></div>`;
   return _modal({
@@ -259,14 +283,14 @@ async function flockForm({ title, body, fields, confirmLabel = "Save", danger = 
     const id = idPrefix + f.name;
     let input;
     if (f.type === "textarea") {
-      input = `<textarea id="${id}" rows="${f.rows || 2}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono">${f.value || ""}</textarea>`;
+      input = `<textarea id="${id}" rows="${f.rows || 2}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono">${esc(f.value || "")}</textarea>`;
     } else if (f.type === "select") {
       const opts = (f.options || []).map((o) =>
-        `<option value="${o.value}"${o.value === f.value ? " selected" : ""}>${o.label || o.value}</option>`
+        `<option value="${esc(o.value)}"${o.value === f.value ? " selected" : ""}>${esc(o.label || o.value)}</option>`
       ).join("");
       input = `<select id="${id}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">${opts}</select>`;
     } else {
-      input = `<input id="${id}" type="${f.type || "text"}" value="${f.value ?? ""}" placeholder="${f.placeholder || ""}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />`;
+      input = `<input id="${id}" type="${f.type || "text"}" value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder || "")}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm font-mono" />`;
     }
     return `
       <div class="mt-3">
@@ -344,8 +368,8 @@ async function renderTopChips() {
     const nodesLabel = `${s.nodes || 0} ${s.nodes === 1 ? "node" : "nodes"}`;
     const modelsLabel = `${s.models_installed || 0} models`;
     $("#topChips").innerHTML = `
-      <span class="pill pill-info">${role}</span>
-      <span class="${engClass}" title="${eng.endpoint || ""}">${engLabel}</span>
+      <span class="pill pill-info">${esc(role)}</span>
+      <span class="${engClass}" title="${esc(eng.endpoint || "")}">${esc(engLabel)}</span>
       <span class="pill pill-info">${nodesLabel}</span>
       <span class="pill pill-info">${modelsLabel}</span>
     `;
@@ -529,7 +553,7 @@ function showShortcutsModal() {
 
 function renderKeyStatus() {
   const masked = API_KEY ? API_KEY.slice(0, 9) + "…" : "no key";
-  $("#keyStatus").innerHTML = `<span class="text-slate-400">key:</span> <span class="font-mono">${masked}</span> <button id="signout" class="ml-2 text-slate-400 hover:text-white underline">sign out</button>`;
+  $("#keyStatus").innerHTML = `<span class="text-slate-400">key:</span> <span class="font-mono">${esc(masked)}</span> <button id="signout" class="ml-2 text-slate-400 hover:text-white underline">sign out</button>`;
   $("#signout").onclick = () => {
     localStorage.removeItem(KEY_STORAGE);
     API_KEY = "";
@@ -604,10 +628,10 @@ async function renderDashboard() {
     const recentList = (recent || []).slice(0, 6).map((u) => {
       const outcomeBadge = (u.Outcome === "ok" || u.Outcome === "success") ?
         `<span class="pill pill-ok">ok</span>` :
-        `<span class="pill pill-err">${u.Outcome || "?"}</span>`;
+        `<span class="pill pill-err">${esc(u.Outcome || "?")}</span>`;
       return `<div class="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
         <span class="font-mono text-slate-500">${new Date(u.TS).toLocaleTimeString()}</span>
-        <span class="font-mono">${u.Model}</span>
+        <span class="font-mono">${esc(u.Model)}</span>
         <span class="text-slate-500">${u.LatencyMS} ms</span>
         ${outcomeBadge}
       </div>`;
@@ -644,7 +668,7 @@ async function renderDashboard() {
         </div>
         <div class="bg-white border border-slate-200 rounded p-4">
           <div class="text-xs text-slate-500 uppercase tracking-wide">Top model</div>
-          ${topModel ? `<div class="text-base font-semibold mt-1 font-mono truncate">${topModel.model}</div>
+          ${topModel ? `<div class="text-base font-semibold mt-1 font-mono truncate">${esc(topModel.model)}</div>
             <div class="text-xs text-slate-500 mt-1">${topModel.count} requests</div>` :
             `<div class="text-sm text-slate-400 mt-1">no requests yet</div>`}
         </div>
@@ -666,13 +690,13 @@ async function renderDashboard() {
         <div class="bg-white border border-slate-200 rounded p-4">
           <div class="text-sm font-semibold mb-2">Quick start</div>
           <pre class="text-xs bg-slate-900 text-slate-100 p-3 rounded overflow-auto">curl ${location.origin}/v1/chat/completions \\
-  -H 'Authorization: Bearer ${API_KEY}' \\
+  -H 'Authorization: Bearer ${esc(API_KEY)}' \\
   -H 'Content-Type: application/json' \\
   -d '{"model":"auto","messages":[{"role":"user","content":"hello"}]}'</pre>
         </div>
       </div>`;
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -712,7 +736,7 @@ async function renderConnect() {
     }
     const clients = connectClientsCache;
     const options = clients.map((c, i) =>
-      `<option value="${c.ID}"${i === 0 ? " selected" : ""}>${c.ID} — ${c.Description}</option>`
+      `<option value="${esc(c.ID)}"${i === 0 ? " selected" : ""}>${esc(c.ID)} — ${esc(c.Description)}</option>`
     ).join("");
     root.innerHTML = `
       <div class="mb-3">
@@ -752,7 +776,7 @@ async function renderConnect() {
     // Auto-render the first client's snippet on load.
     await renderConnectSnippet();
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -804,12 +828,12 @@ async function runHealthCheck() {
       body: JSON.stringify({}),
     });
     if (out.ok) {
-      box.innerHTML = `<span class="text-emerald-700">✔ OK</span> · ${out.latency_ms} ms · model: <span class="code">${out.model}</span> · engine: <span class="code">${out.engine}</span><br><span class="text-xs text-slate-500">Reply: "${(out.reply || "").replace(/</g, "&lt;").slice(0, 200)}"</span>`;
+      box.innerHTML = `<span class="text-emerald-700">✔ OK</span> · ${out.latency_ms} ms · model: <span class="code">${esc(out.model)}</span> · engine: <span class="code">${esc(out.engine)}</span><br><span class="text-xs text-slate-500">Reply: "${esc((out.reply || "").slice(0, 200))}"</span>`;
     } else {
-      box.innerHTML = `<span class="text-red-700">✘ FAILED</span> · ${out.latency_ms} ms · model: <span class="code">${out.model}</span><br><span class="text-xs text-red-600">${out.error || "unknown error"}</span>`;
+      box.innerHTML = `<span class="text-red-700">✘ FAILED</span> · ${out.latency_ms} ms · model: <span class="code">${esc(out.model)}</span><br><span class="text-xs text-red-600">${esc(out.error || "unknown error")}</span>`;
     }
   } catch (e) {
-    box.innerHTML = `<span class="text-red-700">✘ request failed:</span> ${e.message}`;
+    box.innerHTML = `<span class="text-red-700">✘ request failed:</span> ${esc(e.message)}`;
   }
 }
 
@@ -830,7 +854,7 @@ async function renderPlayground() {
       playgroundModels = (resp.data || []).map((m) => m.id);
     }
     const options = playgroundModels.map((id, i) =>
-      `<option value="${id}"${i === 0 ? " selected" : ""}>${id}</option>`
+      `<option value="${esc(id)}"${i === 0 ? " selected" : ""}>${esc(id)}</option>`
     ).join("");
     root.innerHTML = `
       <div class="mb-3">
@@ -966,7 +990,7 @@ Nikola Tesla pioneered AC electrical systems.</textarea>
       $("#pgUser").focus();
     }
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -981,8 +1005,8 @@ function pgImagePreview() {
   const r = new FileReader();
   r.onload = () => {
     pgImageDataURL = r.result;
-    preview.innerHTML = `<img src="${r.result}" class="max-h-32 rounded border border-slate-200" alt="preview">
-      <div class="text-xs text-slate-500 mt-1">${file.name} · ${(file.size/1024).toFixed(1)} KB</div>`;
+    preview.innerHTML = `<img src="${esc(r.result)}" class="max-h-32 rounded border border-slate-200" alt="preview">
+      <div class="text-xs text-slate-500 mt-1">${esc(file.name)} · ${(file.size/1024).toFixed(1)} KB</div>`;
     preview.classList.remove("hidden");
     clearBtn.classList.remove("hidden");
   };
@@ -1221,15 +1245,15 @@ async function renderNodes() {
         stateCell += ` <span class="text-xs ml-1 text-red-700 bg-red-50 border border-red-200 px-1.5 rounded" title="Router parked this node after consecutive errors. It will re-enter rotation at ${until.toLocaleTimeString()}.">🚫 cooldown · ${secs}s</span>`;
       }
       return [
-        `<span class="code">${n.ID}</span>`,
-        n.Hostname,
-        `${n.OS}/${n.Arch}`,
+        `<span class="code">${esc(n.ID)}</span>`,
+        esc(n.Hostname),
+        `${esc(n.OS)}/${esc(n.Arch)}`,
         `${n.RAMGB} GB`,
-        n.Address || "<i class='text-slate-400'>—</i>",
+        n.Address ? esc(n.Address) : "<i class='text-slate-400'>—</i>",
         stateCell,
         new Date(n.LastHeartbeat).toLocaleString(),
-        `<button class="text-xs text-amber-700 hover:underline" onclick="drainNode('${n.ID}')">drain</button>
-         <button class="text-xs text-red-600 hover:underline ml-2" onclick="removeNode('${n.ID}')">remove</button>`,
+        `<button class="text-xs text-amber-700 hover:underline" onclick="drainNode('${escJS(n.ID)}')">drain</button>
+         <button class="text-xs text-red-600 hover:underline ml-2" onclick="removeNode('${escJS(n.ID)}')">remove</button>`,
       ];
     });
     root.innerHTML = `
@@ -1239,7 +1263,7 @@ async function renderNodes() {
       </div>
       ${table(["ID", "Hostname", "OS/Arch", "RAM", "Address", "State", "Last heartbeat", ""], rows)}`;
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -1318,27 +1342,27 @@ function showJoinHelperModal(baseURL, token) {
       <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
         <div>
           <div class="text-xs text-slate-500 uppercase tracking-wide">Leader URL</div>
-          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${baseURL}</div>
+          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${esc(baseURL)}</div>
         </div>
         <div>
           <div class="text-xs text-slate-500 uppercase tracking-wide">Worker token (scope=node)</div>
-          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${token}</div>
+          <div class="mt-1 font-mono text-xs break-all bg-slate-100 border border-slate-200 rounded px-2 py-1">${esc(token)}</div>
         </div>
       </div>
 
       <div class="mt-5">
         <div class="text-xs text-slate-500 uppercase tracking-wide">Option 1 · Fresh machine (no flock yet)</div>
         <div class="flex items-start gap-2 mt-1">
-          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${installAndJoin}</pre>
-          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText(${JSON.stringify(installAndJoin)}); toast('Copied install-and-join', 'ok')">Copy</button>
+          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${esc(installAndJoin)}</pre>
+          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText('${escJS(installAndJoin)}'); toast('Copied install-and-join', 'ok')">Copy</button>
         </div>
       </div>
 
       <div class="mt-3">
         <div class="text-xs text-slate-500 uppercase tracking-wide">Option 2 · Flock already installed</div>
         <div class="flex items-start gap-2 mt-1">
-          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${justJoin}</pre>
-          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText(${JSON.stringify(justJoin)}); toast('Copied join command', 'ok')">Copy</button>
+          <pre class="flex-1 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${esc(justJoin)}</pre>
+          <button class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded" onclick="navigator.clipboard.writeText('${escJS(justJoin)}'); toast('Copied join command', 'ok')">Copy</button>
         </div>
       </div>
 
@@ -1354,9 +1378,9 @@ function showOneTimeModal(title, blurb, content) {
   div.className = "fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6";
   div.innerHTML = `
     <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-      <div class="text-lg font-semibold">${title}</div>
+      <div class="text-lg font-semibold">${esc(title)}</div>
       <div class="text-sm text-slate-600 mt-1">${blurb}</div>
-      <pre id="otmText" class="mt-3 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${content}</pre>
+      <pre id="otmText" class="mt-3 bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-auto select-all">${esc(content)}</pre>
       <div class="mt-4 flex justify-end gap-2">
         <button class="text-sm text-slate-600 hover:underline" onclick="navigator.clipboard.writeText(document.getElementById('otmText').textContent)">Copy</button>
         <button class="text-sm bg-slate-900 text-white px-4 py-1 rounded" onclick="this.closest('.fixed').remove()">Done</button>
@@ -1459,12 +1483,12 @@ function showInviteResult(res) {
   // Replace modal body with the result card.
   const body = document.getElementById("inviteModalBody");
   if (!body) return;
-  const safeMd = (res.markdown_card || "").replace(/</g, "&lt;");
+  const safeMd = esc(res.markdown_card || "");
   body.innerHTML = `
     <div class="flex justify-between items-start mb-3">
       <div>
-        <div class="text-lg font-semibold">✔ Created '${res.name}'</div>
-        <div class="text-xs text-slate-600 mt-1">Token id: <span class="code">${res.token_id}</span> · scope: ${res.scope} · revoke later with <span class="code">flock token revoke ${res.token_id}</span></div>
+        <div class="text-lg font-semibold">✔ Created '${esc(res.name)}'</div>
+        <div class="text-xs text-slate-600 mt-1">Token id: <span class="code">${esc(res.token_id)}</span> · scope: ${esc(res.scope)} · revoke later with <span class="code">flock token revoke ${esc(res.token_id)}</span></div>
       </div>
       <button class="text-slate-400 hover:text-slate-700" onclick="this.closest('.fixed').remove()">✕</button>
     </div>
@@ -1472,7 +1496,7 @@ function showInviteResult(res) {
     <div class="mb-3">
       <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">Token (shown once — copy now)</div>
       <div class="flex items-center gap-2">
-        <input readonly value="${res.token}" id="invTokenField" class="flex-1 font-mono text-sm border border-slate-300 rounded px-2 py-1.5 bg-slate-50" onclick="this.select()" />
+        <input readonly value="${esc(res.token)}" id="invTokenField" class="flex-1 font-mono text-sm border border-slate-300 rounded px-2 py-1.5 bg-slate-50" onclick="this.select()" />
         <button onclick="copyVal('invTokenField', this)" class="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1.5 rounded">Copy</button>
       </div>
     </div>
@@ -1525,29 +1549,29 @@ async function renderModels() {
       if (!lic) return `<span class="text-xs text-slate-400">—</span>`;
       const restrictive = !/^(apache-2\.0|mit|bsd|lfm-open)$/i.test(lic);
       const color = restrictive ? "text-amber-700 bg-amber-50 border-amber-200" : "text-emerald-700 bg-emerald-50 border-emerald-200";
-      const label = `<span class="text-xs font-mono border px-1.5 py-0.5 rounded ${color}" title="${url || ''}">${lic}</span>`;
-      return url ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="hover:underline">${label}</a>` : label;
+      const label = `<span class="text-xs font-mono border px-1.5 py-0.5 rounded ${color}" title="${esc(url || '')}">${esc(lic)}</span>`;
+      return url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" class="hover:underline">${label}</a>` : label;
     };
 
     const installedSet = new Set((installed || []).map((m) => m.CatalogID));
     const installedRows = (installed || []).map((m) => {
       const c = byID[m.CatalogID] || {};
       const released = c.released
-        ? `<span class="text-xs text-slate-600 font-mono">${c.released}</span>`
+        ? `<span class="text-xs text-slate-600 font-mono">${esc(c.released)}</span>`
         : `<span class="text-xs text-slate-400">—</span>`;
       return [
-        `<span class="code">${m.CatalogID}</span>`,
+        `<span class="code">${esc(m.CatalogID)}</span>`,
         stateBadge(m.Status),
         licenseBadge(c.license, c.license_url),
         released,
-        `<span class="code">${m.Source}</span>`,
+        `<span class="code">${esc(m.Source)}</span>`,
         m.SizeBytes ? (m.SizeBytes / 1e9).toFixed(1) + " GB" : "—",
         new Date(m.InstalledAt).toLocaleString(),
         `<div class="flex gap-3">
-           <button class="text-xs text-emerald-700 hover:underline" onclick="testInPlayground('${m.CatalogID}')" title="Open Playground pre-wired to this model">test</button>
-           <button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${m.CatalogID}')" title="Bring into engine RAM now (memory-aware: offers an LRU swap when it doesn't fit)">load</button>
-           <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${m.CatalogID}')" title="Drain, then drop the model from engine RAM without deleting weights">unload</button>
-           <button class="text-xs text-red-600 hover:underline" onclick="removeModel('${m.CatalogID}')">remove</button>
+           <button class="text-xs text-emerald-700 hover:underline" onclick="testInPlayground('${escJS(m.CatalogID)}')" title="Open Playground pre-wired to this model">test</button>
+           <button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${escJS(m.CatalogID)}')" title="Bring into engine RAM now (memory-aware: offers an LRU swap when it doesn't fit)">load</button>
+           <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${escJS(m.CatalogID)}')" title="Drain, then drop the model from engine RAM without deleting weights">unload</button>
+           <button class="text-xs text-red-600 hover:underline" onclick="removeModel('${escJS(m.CatalogID)}')">remove</button>
          </div>`,
       ];
     });
@@ -1596,7 +1620,7 @@ async function renderModels() {
     window.__installedSet = installedSet;
     renderCatalogTable();
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -1611,12 +1635,12 @@ function memoryCard(mem) {
   const barColor = pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-emerald-500";
   const rows = (mem.resident || []).map((r) => `
       <div class="flex items-center gap-3 text-sm py-1">
-        <span class="code flex-1">${r.catalog_id}</span>
+        <span class="code flex-1">${esc(r.catalog_id)}</span>
         <span class="text-xs text-slate-500 font-mono w-20 text-right">${gb(r.size_bytes)}</span>
         ${r.pinned
           ? `<span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 rounded" title="Exempt from eviction and the engine's idle TTL">pinned</span>`
-          : `<button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${r.catalog_id}', true)" title="Pin: exempt from eviction + idle TTL">pin</button>`}
-        <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${r.catalog_id}')">unload</button>
+          : `<button class="text-xs text-sky-700 hover:underline" onclick="loadModelMem('${escJS(r.catalog_id)}', true)" title="Pin: exempt from eviction + idle TTL">pin</button>`}
+        <button class="text-xs text-amber-700 hover:underline" onclick="unloadModel('${escJS(r.catalog_id)}')">unload</button>
       </div>`).join("");
   return `
       <div class="bg-white border border-slate-200 rounded mb-4">
@@ -1702,15 +1726,15 @@ function renderCatalogTable() {
         const installed = installedSet.has(c.id);
         const action = installed
           ? `<span class="pill pill-ok">installed</span>`
-          : `<button class="text-xs bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-800" onclick="addModelFromBrowser('${c.id}', this)">Install</button>`;
+          : `<button class="text-xs bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-800" onclick="addModelFromBrowser('${escJS(c.id)}', this)">Install</button>`;
         return `<tr>
-          <td><span class="code">${c.id}</span></td>
-          <td class="text-xs">${c.display_name || ""}</td>
+          <td><span class="code">${esc(c.id)}</span></td>
+          <td class="text-xs">${esc(c.display_name || "")}</td>
           <td class="text-xs">${sz}</td>
-          <td class="text-xs">${(c.hardware && c.hardware.min_ram_gb) || ""} GB</td>
-          <td class="text-xs">${(c.capabilities || []).join(", ")}</td>
-          <td><span class="text-xs font-mono border px-1.5 py-0.5 rounded ${licClass(c.license)}">${c.license || "—"}</span></td>
-          <td class="text-xs text-slate-500">${c.released || "—"}</td>
+          <td class="text-xs">${esc((c.hardware && c.hardware.min_ram_gb) || "")} GB</td>
+          <td class="text-xs">${esc((c.capabilities || []).join(", "))}</td>
+          <td><span class="text-xs font-mono border px-1.5 py-0.5 rounded ${licClass(c.license)}">${esc(c.license || "—")}</span></td>
+          <td class="text-xs text-slate-500">${esc(c.released || "—")}</td>
           <td>${action}</td>
         </tr>`;
       }).join("") : `<tr><td colspan="8" class="text-center text-slate-500 py-6">no matches</td></tr>`}</tbody>
@@ -1759,7 +1783,7 @@ async function addCustomModel() {
 async function removeModel(id) {
   const ok = await flockConfirm({
     title: `Remove ${id}?`,
-    body: `This deletes the weights from the local engine (non-sharded) or tears down every shard (sharded). The catalog entry stays; you can reinstall later with <code>flock model add ${id}</code>.`,
+    body: `This deletes the weights from the local engine (non-sharded) or tears down every shard (sharded). The catalog entry stays; you can reinstall later with <code>flock model add ${esc(id)}</code>.`,
     confirmLabel: "Remove",
     danger: true,
   });
@@ -1828,7 +1852,7 @@ async function renderShards() {
         crashloop: "bg-red-600 text-white font-bold",
       };
       const c = colors[p.status] || "bg-slate-100 text-slate-700";
-      return `<span class="text-xs px-2 py-0.5 rounded ${c}" title="PID ${p.pid}${p.exit_err ? '\n' + p.exit_err : ''}">${p.status}</span>`;
+      return `<span class="text-xs px-2 py-0.5 rounded ${c}" title="PID ${p.pid}${p.exit_err ? esc('\n' + p.exit_err) : ''}">${esc(p.status)}</span>`;
     };
 
     const restartsCell = (shard) => {
@@ -1851,21 +1875,21 @@ async function renderShards() {
       : groupNames.map((mid) => {
           const rows = groups[mid].map((s) => [
             roleBadge(s.Role),
-            `<span class="code">${s.NodeID}</span>`,
-            `<span class="code">${s.Address}</span>`,
+            `<span class="code">${esc(s.NodeID)}</span>`,
+            `<span class="code">${esc(s.Address)}</span>`,
             runtimeBadge(s),
             restartsCell(s),
             new Date(s.LastSeen).toLocaleString(),
-            `<button class="text-red-600 hover:underline text-xs" onclick="removeSharded('${mid}')">remove model</button>`,
+            `<button class="text-red-600 hover:underline text-xs" onclick="removeSharded('${escJS(mid)}')">remove model</button>`,
           ]);
           return `
             <div class="bg-white border border-slate-200 rounded">
               <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
                 <div>
-                  <div class="font-semibold text-slate-900">${mid}</div>
+                  <div class="font-semibold text-slate-900">${esc(mid)}</div>
                   <div class="text-xs text-slate-500">${groups[mid].length} shard${groups[mid].length === 1 ? '' : 's'}</div>
                 </div>
-                <button class="text-red-600 hover:underline text-sm" onclick="removeSharded('${mid}')">Tear down</button>
+                <button class="text-red-600 hover:underline text-sm" onclick="removeSharded('${escJS(mid)}')">Tear down</button>
               </div>
               ${table(["Role", "Node", "Address", "Runtime", "Restarts", "Last seen", ""], rows)}
             </div>`;
@@ -1905,7 +1929,7 @@ async function renderShards() {
         <strong>Runtime states:</strong> <span class="px-1.5 py-0.5 rounded bg-green-100 text-green-700">running</span> · <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">starting</span> · <span class="px-1.5 py-0.5 rounded bg-red-100 text-red-700">failed</span> (transient, auto-restart kicks in) · <span class="px-1.5 py-0.5 rounded bg-red-600 text-white font-bold">crashloop</span> (5 restarts exhausted — operator must intervene). Remote rpc-server processes show "(remote)" until v0.7 fans out the supervisor probe to workers.
       </div>`;
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -1935,7 +1959,7 @@ async function createSharded() {
 async function removeSharded(modelID) {
   const ok = await flockConfirm({
     title: `Tear down sharded ${modelID}?`,
-    body: `Stops the coordinator and every rpc-server worker. Weights remain on disk on each shard host; the model can be rebuilt with <code>flock shard create ${modelID}</code>.`,
+    body: `Stops the coordinator and every rpc-server worker. Weights remain on disk on each shard host; the model can be rebuilt with <code>flock shard create ${esc(modelID)}</code>.`,
     confirmLabel: "Tear down",
     danger: true,
   });
@@ -1951,7 +1975,7 @@ async function removeSharded(modelID) {
 
 function roleBadge(r) {
   const cls = r === "coordinator" ? "pill-info" : "pill-ok";
-  return `<span class="pill ${cls}">${r}</span>`;
+  return `<span class="pill ${cls}">${esc(r)}</span>`;
 }
 
 async function renderTokens() {
@@ -1968,22 +1992,22 @@ async function renderTokens() {
     window.__tokensCatalog = catalog || [];
 
     const rows = (keys || []).map((k) => [
-      `<span class="code">${k.id}</span>`,
-      k.name,
+      `<span class="code">${esc(k.id)}</span>`,
+      esc(k.name),
       scopeBadge(k.scope),
-      k.user_id || "<i class='text-slate-400'>—</i>",
-      k.quota_daily_tokens > 0 ? k.quota_daily_tokens.toLocaleString() : "<i class='text-slate-400'>∞</i>",
+      k.user_id ? esc(k.user_id) : "<i class='text-slate-400'>—</i>",
+      k.quota_daily_tokens > 0 ? esc(k.quota_daily_tokens.toLocaleString()) : "<i class='text-slate-400'>∞</i>",
       renderRateLimit(k.rpm_limit, "rpm"),
       renderRateLimit(k.tpm_limit, "tpm"),
       renderAllowedModels(k.allowed_models),
       renderTokenStatus(k),
       new Date(k.created_at).toLocaleString(),
       k.revoked ? "" : `<div class="flex gap-2 flex-wrap">
-        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${k.id}', ${JSON.stringify(k.allowed_models || []).replace(/"/g, '&quot;')}, ${k.allowed_models == null})">models…</button>
-        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenRates('${k.id}', ${k.rpm_limit || 0}, ${k.tpm_limit || 0})">rates…</button>
-        <button class="text-xs text-slate-700 hover:underline" onclick="manageBudgets('${k.id}')">budgets…</button>
-        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenExpiry('${k.id}', '${k.expires_at || ''}')">expiry…</button>
-        <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${k.id}')">revoke</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenAllowlist('${escJS(k.id)}', ${esc(JSON.stringify(k.allowed_models || []))}, ${k.allowed_models == null})">models…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenRates('${escJS(k.id)}', ${Number(k.rpm_limit) || 0}, ${Number(k.tpm_limit) || 0})">rates…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="manageBudgets('${escJS(k.id)}')">budgets…</button>
+        <button class="text-xs text-slate-700 hover:underline" onclick="editTokenExpiry('${escJS(k.id)}', '${escJS(k.expires_at || '')}')">expiry…</button>
+        <button class="text-xs text-red-600 hover:underline" onclick="revokeToken('${escJS(k.id)}')">revoke</button>
       </div>`,
     ]);
     root.innerHTML = `
@@ -2029,13 +2053,13 @@ async function renderTokens() {
           </div>
         </div>
         <div class="mt-3">
-          <label class="text-xs text-slate-500">Allowed models <span class="text-slate-400">(optional — leave blank for any; supports `claude-*` glob)</span></label>
+          <label class="text-xs text-slate-500">Allowed models <span class="text-slate-400">(optional — leave blank for any; supports \`claude-*\` glob)</span></label>
           <input id="tokAllowed" type="text" placeholder="qwen3-14b, claude-*, gpt-4o-mini" class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono" />
         </div>
         <p id="tokMsg" class="hidden mt-2 text-sm"></p>
       </div>`;
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2062,7 +2086,7 @@ function renderTokenStatus(k) {
 // otherwise the integer formatted with thousands separators.
 function renderRateLimit(n, kind) {
   if (!n || n <= 0) return `<span class="text-xs text-slate-400">∞</span>`;
-  return `<span class="text-xs font-mono">${n.toLocaleString()}</span>`;
+  return `<span class="text-xs font-mono">${esc(n.toLocaleString())}</span>`;
 }
 
 // editTokenRates opens a single styled modal with both RPM and TPM
@@ -2105,7 +2129,7 @@ function renderAllowedModels(allowed) {
     return `<span class="text-xs text-red-700 bg-red-50 border border-red-200 px-1.5 rounded">deny all</span>`;
   }
   return allowed.map((m) =>
-    `<span class="text-xs font-mono bg-slate-100 border border-slate-200 px-1.5 rounded mr-1">${m}</span>`
+    `<span class="text-xs font-mono bg-slate-100 border border-slate-200 px-1.5 rounded mr-1">${esc(m)}</span>`
   ).join("");
 }
 
@@ -2226,8 +2250,8 @@ async function manageBudgets(keyID) {
         return `
           <div class="border border-slate-200 rounded p-2 mb-2 text-xs">
             <div class="flex justify-between mb-1">
-              <span><strong>${b.Window}</strong> · ${curLabel} / ${unitLabel} (${pct.toFixed(1)}%)</span>
-              <button class="text-red-600 hover:underline" onclick="removeBudget('${keyID}', ${b.ID})">remove</button>
+              <span><strong>${esc(b.Window)}</strong> · ${curLabel} / ${unitLabel} (${pct.toFixed(1)}%)</span>
+              <button class="text-red-600 hover:underline" onclick="removeBudget('${escJS(keyID)}', ${Number(b.ID)})">remove</button>
             </div>
             <div class="h-1.5 bg-slate-200 rounded overflow-hidden">
               <div class="h-1.5 ${color}" style="width: ${pct}%"></div>
@@ -2346,7 +2370,7 @@ async function createToken() {
 async function revokeToken(id) {
   const ok = await flockConfirm({
     title: "Revoke API key?",
-    body: `Existing sessions using <code>${id}</code> will start returning <code>401 Unauthorized</code> on their next call. This cannot be undone — issue a new key if needed.`,
+    body: `Existing sessions using <code>${esc(id)}</code> will start returning <code>401 Unauthorized</code> on their next call. This cannot be undone — issue a new key if needed.`,
     confirmLabel: "Revoke",
     danger: true,
   });
@@ -2362,7 +2386,7 @@ async function revokeToken(id) {
 
 function scopeBadge(scope) {
   const cls = scope === "admin" ? "pill-err" : scope === "node" ? "pill-warn" : "pill-info";
-  return `<span class="pill ${cls}">${scope}</span>`;
+  return `<span class="pill ${cls}">${esc(scope)}</span>`;
 }
 
 async function renderUsage() {
@@ -2376,9 +2400,9 @@ async function renderUsage() {
     root.dataset.loaded = "1";
     const rows = us.map((u) => [
       new Date(u.TS).toLocaleString(),
-      `<span class="code">${u.UserID || u.APIKeyID}</span>`,
-      u.Model,
-      u.Protocol,
+      `<span class="code">${esc(u.UserID || u.APIKeyID)}</span>`,
+      esc(u.Model),
+      esc(u.Protocol),
       u.PromptTokens,
       u.CompletionTokens,
       u.LatencyMS + " ms",
@@ -2419,7 +2443,7 @@ async function renderUsage() {
     $("#bdSince").value = isoDate;
     loadBreakdown();
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2450,7 +2474,7 @@ async function loadBreakdown() {
       .concat(["Prompt", "Completion", "Requests"])
       .concat(showCost ? ["$"] : []);
     const tableRows = rows.map((r) => {
-      const cells = [r.bucket].concat(groups.map((g) => r[g] || ""))
+      const cells = [esc(r.bucket)].concat(groups.map((g) => esc(r[g] || "")))
         .concat([
           (r.prompt_tokens || 0).toLocaleString(),
           (r.completion_tokens || 0).toLocaleString(),
@@ -2468,7 +2492,7 @@ async function loadBreakdown() {
          }
        </div>`;
   } catch (e) {
-    host.innerHTML = `<div class="text-xs text-red-600">${e.message}</div>`;
+    host.innerHTML = `<div class="text-xs text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2507,7 +2531,7 @@ async function renderAudit() {
     }
     renderAuditRows();
   } catch (err) {
-    root.innerHTML = `<div class="text-sm text-red-600">${err.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(err.message)}</div>`;
   }
 }
 
@@ -2531,9 +2555,9 @@ function renderAuditRows() {
   }
   const rows = es.map((e) => [
     new Date(e.TS).toLocaleString(),
-    e.Actor || `<span class="text-slate-400">—</span>`,
-    `<span class="code">${e.Action}</span>`,
-    e.Target || `<span class="text-slate-400">—</span>`,
+    e.Actor ? esc(e.Actor) : `<span class="text-slate-400">—</span>`,
+    `<span class="code">${esc(e.Action)}</span>`,
+    e.Target ? esc(e.Target) : `<span class="text-slate-400">—</span>`,
   ]);
   host.innerHTML = table(["Time", "Actor", "Action", "Target"], rows);
 }
@@ -2546,10 +2570,10 @@ async function renderSettings() {
     const rows = (label, obj) => {
       const inner = Object.entries(obj).map(([k, v]) => {
         const val = typeof v === "object" && v !== null
-          ? `<pre class="text-xs">${JSON.stringify(v, null, 2)}</pre>`
-          : `<span class="code">${v === "" ? "<i class='text-slate-400'>(unset)</i>" : v}</span>`;
+          ? `<pre class="text-xs">${esc(JSON.stringify(v, null, 2))}</pre>`
+          : `<span class="code">${v === "" ? "<i class='text-slate-400'>(unset)</i>" : esc(v)}</span>`;
         return `<div class="flex justify-between gap-4 py-1.5 border-b border-slate-100 last:border-0">
-                  <span class="text-slate-600 text-sm">${k}</span><span class="text-sm">${val}</span>
+                  <span class="text-slate-600 text-sm">${esc(k)}</span><span class="text-sm">${val}</span>
                 </div>`;
       }).join("");
       return `<div class="bg-white border border-slate-200 rounded p-4">
@@ -2567,7 +2591,7 @@ async function renderSettings() {
         : `<span class="inline-block w-2 h-2 rounded-full bg-slate-300 mr-2"></span>`;
       return `<div class="py-1.5 border-b border-slate-100 last:border-0">
                 <div class="text-sm font-medium text-slate-700">${dot}${label}</div>
-                <div class="text-xs ${color} pl-4">${status}</div>
+                <div class="text-xs ${color} pl-4">${esc(status)}</div>
               </div>`;
     };
 
@@ -2608,7 +2632,7 @@ async function renderSettings() {
 
       <div class="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
         <div class="font-semibold mb-1">To change settings</div>
-        <div>${cfg.edit_hint || "Edit ~/.flock/config.yaml and restart flock."}</div>
+        <div>${esc(cfg.edit_hint || "Edit ~/.flock/config.yaml and restart flock.")}</div>
         <div class="mt-2">Vendor fallback keys come from env vars:</div>
         <pre class="text-xs bg-amber-100 mt-1 p-2 rounded">ANTHROPIC_API_KEY=…   # claude-* via /v1/messages
 OPENAI_API_KEY=…      # gpt-* / o-* via /v1/chat/completions
@@ -2654,7 +2678,7 @@ FLOCK_OTLP_ENDPOINT=http://localhost:4318     # OTLP traces</pre>
     loadGuardrailsCard(cfg);
     loadCacheCard();
   } catch (e) {
-    root.innerHTML = `<div class="text-sm text-red-600">${e.message}</div>`;
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2676,15 +2700,15 @@ async function loadCallbacksCard() {
       <div class="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
         <div>
           <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-2"></span>
-          <span class="text-sm font-medium">${s.name}</span>
+          <span class="text-sm font-medium">${esc(s.name)}</span>
         </div>
         <button class="text-xs bg-slate-200 hover:bg-slate-300 px-2 py-1 rounded"
-                onclick="fireCallbackTest('${s.name}', this)">Send test event</button>
+                onclick="fireCallbackTest('${escJS(s.name)}', this)">Send test event</button>
       </div>`).join("");
     card.innerHTML = title + rows +
       `<div class="text-xs text-slate-500 mt-2">Each sink runs on its own goroutine with a bounded queue — a slow receiver is non-blocking on the request path. Drops on overflow are counted on <span class="code">flock_callback_sent_total{outcome=dropped}</span>.</div>`;
   } catch (e) {
-    card.innerHTML = title + `<div class="text-xs text-red-600">${e.message}</div>`;
+    card.innerHTML = title + `<div class="text-xs text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2720,10 +2744,10 @@ async function loadGuardrailsCard(cfg) {
                       "text-amber-700 bg-amber-50";
     return `<div class="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
       <div>
-        <span class="text-sm font-medium">${g.name || "(unnamed)"}</span>
-        <span class="text-xs text-slate-500 ml-2">${g.kind}</span>
+        <span class="text-sm font-medium">${esc(g.name || "(unnamed)")}</span>
+        <span class="text-xs text-slate-500 ml-2">${esc(g.kind)}</span>
       </div>
-      <span class="text-xs ${modeColor} px-2 py-0.5 rounded font-mono">${g.mode || "?"}</span>
+      <span class="text-xs ${modeColor} px-2 py-0.5 rounded font-mono">${esc(g.mode || "?")}</span>
     </div>`;
   }).join("");
   card.innerHTML = title + rows;
@@ -2748,7 +2772,7 @@ async function loadCacheCard() {
       : "—";
     card.innerHTML = title + `
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-        <div><div class="text-xs text-slate-500">Driver</div><div class="font-mono">${s.driver}</div></div>
+        <div><div class="text-xs text-slate-500">Driver</div><div class="font-mono">${esc(s.driver)}</div></div>
         <div><div class="text-xs text-slate-500">Entries</div><div class="font-mono">${(s.entries || 0).toLocaleString()}</div></div>
         <div><div class="text-xs text-slate-500">Bytes</div><div class="font-mono">${(s.bytes_stored || 0).toLocaleString()}</div></div>
         <div><div class="text-xs text-slate-500">Hit rate</div><div class="font-mono">${hitRate}</div></div>
@@ -2762,7 +2786,7 @@ async function loadCacheCard() {
       </div>
       <div class="text-xs text-slate-500 mt-3">Per-request opt-out via <span class="code">Cache-Control: no-cache</span> / <span class="code">no-store</span>. Per-tenant scoping via <span class="code">flock.cache.namespace</span> body field. Responses carry <span class="code">X-Flock-Cache: hit | miss</span>.</div>`;
   } catch (e) {
-    card.innerHTML = title + `<div class="text-xs text-red-600">${e.message}</div>`;
+    card.innerHTML = title + `<div class="text-xs text-red-600">${esc(e.message)}</div>`;
   }
 }
 
@@ -2787,11 +2811,11 @@ async function flushCache(btn) {
 
 function stateBadge(s) {
   const cls = s === "ready" ? "pill-ok" : s === "draining" ? "pill-warn" : s === "gone" ? "pill-err" : "pill-info";
-  return `<span class="pill ${cls}">${s}</span>`;
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
 }
 function outcomeBadge(s) {
   const cls = s === "ok" ? "pill-ok" : s === "rate_limited" ? "pill-warn" : "pill-err";
-  return `<span class="pill ${cls}">${s}</span>`;
+  return `<span class="pill ${cls}">${esc(s)}</span>`;
 }
 
 // tryBootstrapKey hits the localhost-only /admin/v1/bootstrap-key

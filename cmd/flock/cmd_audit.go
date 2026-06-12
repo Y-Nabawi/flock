@@ -53,23 +53,23 @@ func cmdAudit(args []string) {
 	limit := fs.Int("limit", 50, "maximum rows to show")
 	actor := fs.String("actor", "", "filter by actor name (client-side)")
 	summary := fs.Bool("summary", false, "show top actors + top actions instead of rows")
-	fs.Usage = func() {
-		showHelp(helpSpec{
-			name:    "audit",
-			summary: "show recent admin audit log entries",
-			usage:   "flock audit [--limit N] [--actor X] [--summary] [--json]",
-			flags:   fs,
-			examples: []string{
-				"flock audit                       # latest 50 entries",
-				"flock audit --limit 500",
-				"flock audit --actor admin",
-				"flock audit --summary             # top actors + top actions",
-				"flock audit --json                # machine-readable rows",
-			},
-		})
+	help := helpSpec{
+		name:    "audit",
+		summary: "show recent admin audit log entries",
+		usage:   "flock audit [--limit N] [--actor X] [--summary] [--json]",
+		flags:   fs,
+		examples: []string{
+			"flock audit                       # latest 50 entries",
+			"flock audit --limit 500",
+			"flock audit --actor admin",
+			"flock audit --summary             # top actors + top actions",
+			"flock audit --json                # machine-readable rows",
+		},
 	}
+	// Bad flags: print usage to stderr and let ExitOnError exit 2.
+	fs.Usage = func() { showUsageErr(help) }
 	if wantsHelp(args) {
-		fs.Usage()
+		showHelp(help)
 	}
 	_ = fs.Parse(args)
 

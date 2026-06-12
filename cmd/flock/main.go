@@ -152,14 +152,21 @@ Commands:
   node remove <id>         Remove a node
   model add <id>           Install a model from the catalog
   model ls                 List installed models
+  model ps                 Models resident in engine RAM + free memory
   model search [q]         Search the catalog
   model info <id>          Full details for one catalog model
+  model load <id>          Bring a model into engine RAM (memory-aware)
+  model unload <id>        Drop a model from engine RAM (weights stay)
   model remove <id>        Uninstall a model
   shard create <model> [N] Orchestrate a sharded model across N workers
   shard ls                 List shards
   shard remove <model>     Tear down a sharded model
   token create [name]      Issue an API key (--admin, --node)
   token ls                 List API keys
+  token edit <id>          Edit a key's model allowlist / rate limits
+  token expire <id>        Expire a key now (or --in DURATION)
+  token renew <id>         Extend a key's expiry (--ttl / --expires-at)
+  token budget <add|ls|rm> Attach / list / remove spend budgets on a key
   token revoke <id>        Revoke an API key
   usage [--limit N]        Show recent inference usage records
   audit [--limit N]        Show recent admin audit log entries

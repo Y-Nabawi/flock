@@ -77,12 +77,13 @@ func verifyRequest(r *http.Request, lookup func(nodeID string) (string, error), 
 	if perr != nil {
 		return "", fmt.Errorf("bad ts: %v", perr)
 	}
-	skew := now.Unix() - tsInt
-	if skew < 0 {
-		skew = -skew
-	}
-	if time.Duration(skew)*time.Second > maxSkew {
-		return "", fmt.Errorf("ts skew %ds exceeds max %s — clock issue or replay attempt", skew, maxSkew)
+	// Compare in integer seconds. Converting the attacker-supplied ts
+	// to a time.Duration overflows for |skew| > ~292 years and can wrap
+	// negative, bypassing the window check.
+	maxSkewSecs := int64(maxSkew / time.Second)
+	nowSecs := now.Unix()
+	if tsInt < nowSecs-maxSkewSecs || tsInt > nowSecs+maxSkewSecs {
+		return "", fmt.Errorf("ts %d outside the ±%s window of now — clock issue or replay attempt", tsInt, maxSkew)
 	}
 	token, lerr := lookup(parts["id"])
 	if lerr != nil {

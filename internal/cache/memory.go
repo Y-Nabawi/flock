@@ -128,6 +128,14 @@ func (m *Memory) DeleteNamespace(_ context.Context, ns string) {
 	}
 }
 
+func (m *Memory) DeleteAll(_ context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.items = make(map[string]*list.Element)
+	m.order.Init()
+	m.bytes.Store(0)
+}
+
 func (m *Memory) Stats() Stats {
 	m.mu.Lock()
 	entries := len(m.items)

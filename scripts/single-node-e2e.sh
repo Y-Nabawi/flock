@@ -32,7 +32,10 @@ set -euo pipefail
 FLOCK_BIN="${FLOCK_BIN:-./flock}"
 MODEL="${MODEL:-llama-3.2-1b}"
 OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"
-DATA_DIR="${DATA_DIR:-$(mktemp -d -t flock-e2e-XXXXXXXX)}"
+# Pin the temp dir under /tmp (not mktemp -t): on macOS -t lands under
+# /var/folders, which would dodge the CI failure-artifact glob
+# /tmp/flock-e2e-*/flock.log in .github/workflows/e2e.yml.
+DATA_DIR="${DATA_DIR:-$(mktemp -d /tmp/flock-e2e-XXXXXXXX)}"
 LISTEN_PORT="${LISTEN_PORT:-18080}"
 GATEWAY="http://127.0.0.1:${LISTEN_PORT}"
 
@@ -69,7 +72,7 @@ FLOCK_DATA_DIR="$DATA_DIR" \
 FLOCK_OLLAMA_ENDPOINT="http://${OLLAMA_HOST}" \
 FLOCK_LISTEN="127.0.0.1:${LISTEN_PORT}" \
 FLOCK_REQUIRE_KEYS="false" \
-"$FLOCK_BIN" up --no-wizard --no-unload-on-exit >"$LOG" 2>&1 &
+"$FLOCK_BIN" up --no-wizard >"$LOG" 2>&1 &
 FLOCK_PID=$!
 
 # --- step 2: wait for /healthz ---

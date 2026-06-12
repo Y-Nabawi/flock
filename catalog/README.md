@@ -37,13 +37,13 @@ The parser is `internal/models/catalog.go`. Anything not in this schema is silen
 | `license` | string | Short identifier (SPDX where possible) of the model's release license. Examples: `apache-2.0`, `mit`, `llama-3-community`, `llama-4-community`, `gemma`, `lfm-open`, `nvidia-open`. **Required** — CI fails on missing licenses. Surfaced in `flock model info` so commercial users see it before install. |
 | `license_url` | string | Canonical license text URL — usually the HuggingFace LICENSE file. Rendered alongside `license` in `flock model info`. |
 | `released` | string | Model's public release date in `YYYY-MM-DD` form. Lets users sort the catalog by recency and gauge how stale an entry is. Approximate is fine — use the first of the month if a precise day isn't known. Rendered in `flock model info`. |
-
-**Restricted-license tag convention.** Any entry whose license is not in the permissive set (`apache-2.0`, `mit`, `bsd-2-clause`, `bsd-3-clause`, `lfm-open`) must also carry the tag `restricted-license`. CI enforces this. Users can then `flock model search restricted-license` to find every model with extra terms, and the dashboard's Models tab renders an amber license badge instead of green.
 | `fallback` | []string | **Generic** ordered fallback list — tried when the router can't classify the primary's failure into a more specific category (engine down, model not loaded, 503, timeout). Tried in order; the first that succeeds wins. Transparent to the client — the response carries the requested model name. Operators see hits in the audit log + stderr. |
 | `fallback_on_context_length` | []string | Typed fallback — replaces `fallback` when the primary rejects with a context-length-exceeded error. Typically points at long-context variants. Empty falls through to `fallback`. |
 | `fallback_on_content_policy` | []string | Typed fallback — replaces `fallback` when the upstream (typically a vendor) refuses on content-policy grounds. Typically points at a permissively-aligned open-weight model. Empty falls through to `fallback`. |
 | `price_prompt_usd_per_1k` | float | Optional per-1k-token USD rate for prompt tokens. 0 = no cost tracking (the right default for open-weight models on your own hardware). Operators set this to internally charge departments for compute. Surfaced in `flock model info`. |
 | `price_completion_usd_per_1k` | float | Optional per-1k-token USD rate for completion tokens. Same semantics as the prompt rate. Both rates are snapshotted into each `usage` row at write time, so historical totals stay correct after a rate change. |
+
+**Restricted-license tag convention.** Any entry whose license is not in the permissive set (`apache-2.0`, `mit`, `bsd-2-clause`, `bsd-3-clause`, `lfm-open`) must also carry the tag `restricted-license`. CI enforces this. Users can then `flock model search restricted-license` to find every model with extra terms, and the dashboard's Models tab renders an amber license badge instead of green.
 
 ### Source
 
@@ -96,7 +96,7 @@ sharding:
 
 Prereqs for any sharded entry to actually serve traffic:
 
-1. The GGUF must be on the leader at `source.path` (no auto-distribution in v0.4).
+1. The GGUF must be readable on the leader at `source.path`. The leader then distributes it automatically: each shard host that doesn't already have the file (matched by sha256) receives it via a verified upload to the worker's `/v1/process/upload` endpoint — no manual copying.
 2. `llama.cpp` is installed on every shard host (provides `llama-server` + `rpc-server`).
 3. At least `default_shards` workers have joined.
 
@@ -111,7 +111,7 @@ Then either `flock model add <id>` (which will call shard create with `default_s
 | `vision` | Model accepts image content blocks | `POST /v1/chat/completions` with `image_url` (Ollama path) |
 | `audio` | Model accepts audio content (discovery tag) | API path pending; declare on models with audio understanding |
 | `embedding` | Model returns vector embeddings | `POST /v1/embeddings` |
-| `rerank` | Cross-encoder reranking | `POST /v1/rerank` (planned; not yet wired) |
+| `rerank` | Cross-encoder reranking | `POST /v1/rerank` (Cohere-shape response; passes through to llama-server's native `/v1/rerank`, b3580+) |
 
 The router uses capabilities to match a request to a model. A request for embeddings will never hit a `chat`-only model.
 
@@ -186,8 +186,8 @@ id: qwen3-coder-30b
 display_name: Qwen3 Coder 30B
 # … other fields …
 fallback:
-  - qwen2.5-coder-14b      # try next if 30B is unavailable
-  - qwen2.5-coder-7b       # last resort
+  - qwen-coder-14b         # try next if 30B is unavailable
+  - qwen-coder-7b          # last resort
 ```
 
 When a request for `qwen3-coder-30b` can't be served (engine down, 503, timeout), the router tries the fallback chain in order. The response is returned to the client with `model: "qwen3-coder-30b"` — the fallback is invisible. Operators see the substitution in the audit log.

@@ -73,12 +73,29 @@ JOIN_URL=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
-        --install-dir) INSTALL_DIR="${2:-}"; shift 2 ;;
-        --version) VERSION="${2:-}"; shift 2 ;;
+        --install-dir)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                err "--install-dir requires a value (e.g. --install-dir ~/.local/bin)"
+                usage >&2
+                exit 1
+            fi
+            INSTALL_DIR="$2"; shift 2 ;;
+        --version)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                err "--version requires a value (e.g. --version v0.1.0)"
+                usage >&2
+                exit 1
+            fi
+            VERSION="$2"; shift 2 ;;
         --no-engine) SKIP_ENGINE=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         join)
-            JOIN_URL="${2:-}"; shift 2 || true
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                err "join requires a leader URL (e.g. join http://leader:8080?token=...)"
+                usage >&2
+                exit 1
+            fi
+            JOIN_URL="$2"; shift 2
             break
             ;;
         *)
@@ -195,7 +212,11 @@ resolve_version() {
 resolve_install_dir() {
     if [ -n "$INSTALL_DIR" ]; then
         ok "install dir: $INSTALL_DIR (override)"
-        mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+        if [ "$DRY_RUN" = "1" ]; then
+            note "[dry-run] would create $INSTALL_DIR if missing"
+        else
+            mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+        fi
         return
     fi
     # Try user-writable dirs first, falling back to /usr/local/bin (sudo).
@@ -208,9 +229,13 @@ resolve_install_dir() {
     done
     # Create ~/.local/bin if it doesn't exist (user is creator, no sudo needed)
     if [ -w "$HOME" ]; then
-        mkdir -p "$HOME/.local/bin"
         INSTALL_DIR="$HOME/.local/bin"
-        ok "install dir: $INSTALL_DIR (created)"
+        if [ "$DRY_RUN" = "1" ]; then
+            note "[dry-run] would create install dir $INSTALL_DIR"
+        else
+            mkdir -p "$INSTALL_DIR"
+            ok "install dir: $INSTALL_DIR (created)"
+        fi
         return
     fi
     INSTALL_DIR="/usr/local/bin"
@@ -220,14 +245,22 @@ resolve_install_dir() {
 # ---- download + verify ----
 
 download_binary() {
-    TMPDIR="$(mktemp -d 2>/dev/null || mktemp -d -t flock-install)"
-    trap 'rm -rf "$TMPDIR"' EXIT
-
     URL="https://github.com/${REPO}/releases/download/${VERSION}/flock-${PLATFORM}.tar.gz"
     SUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
+    if [ "$DRY_RUN" = "1" ]; then
+        note "[dry-run] would download ${URL}"
+        note "[dry-run] would verify sha256 against ${SUM_URL}"
+        return
+    fi
+
+    # Note: deliberately NOT named TMPDIR — that would clobber the standard
+    # TMPDIR env var that mktemp & friends consult.
+    tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t flock-install)"
+    trap 'rm -rf "$tmp_dir"' EXIT
+
     note "downloading ${URL}"
-    if ! curl -fsSL "$URL" -o "$TMPDIR/flock.tar.gz"; then
+    if ! curl -fsSL "$URL" -o "$tmp_dir/flock.tar.gz"; then
         err "download failed"
         err "  check that ${VERSION} was published for ${PLATFORM}:"
         err "  https://github.com/${REPO}/releases/tag/${VERSION}"
@@ -235,32 +268,48 @@ download_binary() {
     fi
 
     # Verify checksum (best-effort — older releases might not ship checksums.txt)
-    if curl -fsSL "$SUM_URL" -o "$TMPDIR/checksums.txt" 2>/dev/null; then
-        if command -v shasum >/dev/null 2>&1; then
-            expected="$(grep "flock-${PLATFORM}.tar.gz" "$TMPDIR/checksums.txt" | awk '{print $1}')"
-            if [ -n "$expected" ]; then
-                actual="$(shasum -a 256 "$TMPDIR/flock.tar.gz" | awk '{print $1}')"
-                if [ "$expected" = "$actual" ]; then
-                    ok "checksum verified (sha256)"
-                else
-                    err "checksum MISMATCH — refusing to install possibly-tampered binary"
-                    err "  expected: $expected"
-                    err "  actual:   $actual"
-                    exit 1
-                fi
+    if curl -fsSL "$SUM_URL" -o "$tmp_dir/checksums.txt" 2>/dev/null; then
+        # Prefer sha256sum (Linux coreutils), fall back to shasum (macOS).
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha_cmd="sha256sum"
+        elif command -v shasum >/dev/null 2>&1; then
+            sha_cmd="shasum -a 256"
+        else
+            sha_cmd=""
+        fi
+        if [ -z "$sha_cmd" ]; then
+            warn "neither sha256sum nor shasum is installed — CHECKSUM VERIFICATION SKIPPED"
+            warn "  the downloaded binary was NOT verified against checksums.txt"
+        else
+            expected="$(grep "flock-${PLATFORM}.tar.gz" "$tmp_dir/checksums.txt" | awk '{print $1}')"
+            if [ -z "$expected" ]; then
+                # checksums.txt exists but has no line for this artifact:
+                # fail closed, matching the Go updater's behavior.
+                err "checksums.txt for ${VERSION} has no entry for flock-${PLATFORM}.tar.gz"
+                err "  refusing to install an unverifiable binary"
+                exit 1
+            fi
+            actual="$($sha_cmd "$tmp_dir/flock.tar.gz" | awk '{print $1}')"
+            if [ "$expected" = "$actual" ]; then
+                ok "checksum verified (sha256)"
+            else
+                err "checksum MISMATCH — refusing to install possibly-tampered binary"
+                err "  expected: $expected"
+                err "  actual:   $actual"
+                exit 1
             fi
         fi
     else
         warn "checksums.txt not available for ${VERSION} — skipping verification"
     fi
 
-    if ! tar -xzf "$TMPDIR/flock.tar.gz" -C "$TMPDIR"; then
+    if ! tar -xzf "$tmp_dir/flock.tar.gz" -C "$tmp_dir"; then
         err "tar extract failed"
         exit 1
     fi
-    if [ ! -x "$TMPDIR/flock" ]; then
+    if [ ! -x "$tmp_dir/flock" ]; then
         err "extracted archive does not contain a 'flock' binary"
-        ls -la "$TMPDIR" >&2
+        ls -la "$tmp_dir" >&2
         exit 1
     fi
 }
@@ -270,14 +319,14 @@ download_binary() {
 install_binary() {
     target="$INSTALL_DIR/flock"
     if [ "$DRY_RUN" = "1" ]; then
-        note "[dry-run] would install to $target"
+        note "[dry-run] would install flock ${VERSION} to $target"
         return
     fi
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$TMPDIR/flock" "$target"
+        mv "$tmp_dir/flock" "$target"
     else
         note "installing to $target (sudo required)"
-        sudo mv "$TMPDIR/flock" "$target"
+        sudo mv "$tmp_dir/flock" "$target"
     fi
     chmod +x "$target" 2>/dev/null || sudo chmod +x "$target"
     ok "installed flock ${VERSION} to ${target}"
@@ -285,10 +334,10 @@ install_binary() {
     # Catalog: copy the bundled YAML files to ~/.flock/catalog so
     # `flock up` and `flock model` work out of the box. resolveCatalogDir
     # picks this path up automatically.
-    if [ -d "$TMPDIR/catalog" ]; then
+    if [ -d "$tmp_dir/catalog" ]; then
         catalog_dst="$HOME/.flock/catalog"
         mkdir -p "$catalog_dst"
-        cp "$TMPDIR"/catalog/*.yaml "$catalog_dst/" 2>/dev/null || true
+        cp "$tmp_dir"/catalog/*.yaml "$catalog_dst/" 2>/dev/null || true
         ok "catalog installed at $catalog_dst"
     fi
 
@@ -351,8 +400,12 @@ download_binary
 install_binary
 
 if [ -n "$JOIN_URL" ]; then
-    note "joining cluster: $JOIN_URL"
-    "$INSTALL_DIR/flock" join "$JOIN_URL"
+    if [ "$DRY_RUN" = "1" ]; then
+        note "[dry-run] would join cluster: $JOIN_URL"
+    else
+        note "joining cluster: $JOIN_URL"
+        "$INSTALL_DIR/flock" join "$JOIN_URL"
+    fi
 else
     print_next_steps
 fi

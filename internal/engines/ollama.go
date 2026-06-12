@@ -60,6 +60,10 @@ func (o *Ollama) List(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("list models: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list models failed: %s: %s", resp.Status, string(b))
+	}
 	var body struct {
 		Models []struct {
 			Name string `json:"name"`

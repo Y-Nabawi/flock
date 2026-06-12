@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hadihonarvar/flock/internal/auth"
+	"github.com/hadihonarvar/flock/internal/store"
 )
 
 // Bucket is a leaky/token bucket. capacity == fillRate * 60 because all
@@ -118,6 +119,19 @@ func (b *Bucket) Refund(n float64) {
 	}
 }
 
+// Deduct subtracts n tokens without an admit check (used after the
+// response when the upfront estimate was too small). The balance may go
+// negative — subsequent requests refill and rate-limit normally.
+func (b *Bucket) Deduct(n float64) {
+	if b == nil || n <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refill()
+	b.tokens -= n
+}
+
 func (b *Bucket) refill() {
 	now := time.Now()
 	delta := now.Sub(b.last).Seconds()
@@ -129,20 +143,40 @@ func (b *Bucket) refill() {
 }
 
 // BucketStore holds per-key RPM + TPM buckets. Buckets are created on
-// first use and cached for the lifetime of the process; the leader
-// restart resets all counters (acceptable for v1 per the planning
-// doc — persistent buckets are deferred).
+// first use and cached; entries idle for more than bucketIdleTTL are
+// swept opportunistically (every bucketSweepEvery For() calls) so
+// revoked/deleted keys don't pin memory forever. A leader restart
+// resets all counters (acceptable for v1 per the planning doc —
+// persistent buckets are deferred).
 type BucketStore struct {
-	mu  sync.Mutex
-	rpm map[string]*Bucket
-	tpm map[string]*Bucket
+	mu    sync.Mutex
+	rpm   map[string]*bucketEntry
+	tpm   map[string]*bucketEntry
+	calls int // For() invocations since the last idle sweep
 }
+
+// bucketEntry pairs a bucket with its last-access time so the store can
+// evict entries whose key stopped sending traffic.
+type bucketEntry struct {
+	b       *Bucket
+	lastUse time.Time
+}
+
+const (
+	// bucketIdleTTL is how long an entry can go untouched before the
+	// sweep drops it. Generous compared to the one-minute bucket window
+	// so an active-but-bursty key never loses its counter mid-flight.
+	bucketIdleTTL = time.Hour
+	// bucketSweepEvery bounds how often we pay for the sweep — once per
+	// N For() calls keeps the amortized cost negligible.
+	bucketSweepEvery = 1024
+)
 
 // NewBucketStore returns an empty store ready to back the middleware.
 func NewBucketStore() *BucketStore {
 	return &BucketStore{
-		rpm: make(map[string]*Bucket),
-		tpm: make(map[string]*Bucket),
+		rpm: make(map[string]*bucketEntry),
+		tpm: make(map[string]*bucketEntry),
 	}
 }
 
@@ -151,22 +185,34 @@ func NewBucketStore() *BucketStore {
 // rebuilding the bucket — the cached counter would otherwise represent
 // the old capacity.
 func (s *BucketStore) For(keyID string, rpmLimit, tpmLimit int) (rpm, tpm *Bucket) {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.calls++
+	if s.calls >= bucketSweepEvery {
+		s.calls = 0
+		s.sweepLocked(now)
+	}
 	if rpmLimit > 0 {
-		if b := s.rpm[keyID]; b == nil || int(b.capacity) != rpmLimit {
-			s.rpm[keyID] = NewBucket(rpmLimit)
+		e := s.rpm[keyID]
+		if e == nil || int(e.b.capacity) != rpmLimit {
+			e = &bucketEntry{b: NewBucket(rpmLimit)}
+			s.rpm[keyID] = e
 		}
-		rpm = s.rpm[keyID]
+		e.lastUse = now
+		rpm = e.b
 	} else {
 		// Limit removed: drop the bucket so the next set is a fresh start.
 		delete(s.rpm, keyID)
 	}
 	if tpmLimit > 0 {
-		if b := s.tpm[keyID]; b == nil || int(b.capacity) != tpmLimit {
-			s.tpm[keyID] = NewBucket(tpmLimit)
+		e := s.tpm[keyID]
+		if e == nil || int(e.b.capacity) != tpmLimit {
+			e = &bucketEntry{b: NewBucket(tpmLimit)}
+			s.tpm[keyID] = e
 		}
-		tpm = s.tpm[keyID]
+		e.lastUse = now
+		tpm = e.b
 	} else {
 		delete(s.tpm, keyID)
 	}
@@ -179,9 +225,33 @@ func (s *BucketStore) For(keyID string, rpmLimit, tpmLimit int) (rpm, tpm *Bucke
 // reconciliation path, which doesn't know the current limit but needs
 // to find the bucket if it exists.
 func (s *BucketStore) Get(keyID string) (rpm, tpm *Bucket) {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.rpm[keyID], s.tpm[keyID]
+	if e := s.rpm[keyID]; e != nil {
+		e.lastUse = now
+		rpm = e.b
+	}
+	if e := s.tpm[keyID]; e != nil {
+		e.lastUse = now
+		tpm = e.b
+	}
+	return rpm, tpm
+}
+
+// sweepLocked drops every entry idle for longer than bucketIdleTTL.
+// Caller must hold s.mu.
+func (s *BucketStore) sweepLocked(now time.Time) {
+	for k, e := range s.rpm {
+		if now.Sub(e.lastUse) > bucketIdleTTL {
+			delete(s.rpm, k)
+		}
+	}
+	for k, e := range s.tpm {
+		if now.Sub(e.lastUse) > bucketIdleTTL {
+			delete(s.tpm, k)
+		}
+	}
 }
 
 // RateLimitMiddleware enforces per-key RPM (requests per minute) and
@@ -230,6 +300,7 @@ func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
 			r = r.WithContext(WithRateLimitEstimate(r.Context(), key.ID, estimate))
 
 			if ok, retry := rpm.Take(1); !ok {
+				setRateLimitHeaders(w, key, rpm, tpm)
 				writeRateLimited(w, retry, "rpm", key.RPMLimit)
 				return
 			}
@@ -237,6 +308,7 @@ func RateLimitMiddleware(buckets *BucketStore) func(http.Handler) http.Handler {
 				// Refund the RPM token so the user isn't double-charged
 				// for a request we never admitted.
 				rpm.Refund(1)
+				setRateLimitHeaders(w, key, rpm, tpm)
 				writeRateLimited(w, retry, "tpm", key.TPMLimit)
 				return
 			}
@@ -256,6 +328,25 @@ func estimateTokens(body []byte) int {
 		return 1
 	}
 	return n
+}
+
+// setRateLimitHeaders mirrors ResponseHeadersMiddleware for the 429
+// short-circuit. Rejected requests never reach that middleware (it is
+// mounted after this one so "remaining" reflects each admitted
+// request's deduction), so the rejection itself must carry the
+// x-ratelimit-* headers and a correlation id.
+func setRateLimitHeaders(w http.ResponseWriter, key *store.APIKey, rpm, tpm *Bucket) {
+	w.Header().Set(HeaderRequestID, newRequestID())
+	if rpm != nil && key.RPMLimit > 0 {
+		w.Header().Set(HeaderLimitRequests, strconv.Itoa(key.RPMLimit))
+		w.Header().Set(HeaderRemainingRequests, strconv.Itoa(int(rpm.Available())))
+		w.Header().Set(HeaderResetRequests, strconv.Itoa(rpm.RefillETA()))
+	}
+	if tpm != nil && key.TPMLimit > 0 {
+		w.Header().Set(HeaderLimitTokens, strconv.Itoa(key.TPMLimit))
+		w.Header().Set(HeaderRemainingTokens, strconv.Itoa(int(tpm.Available())))
+		w.Header().Set(HeaderResetTokens, strconv.Itoa(tpm.RefillETA()))
+	}
 }
 
 func writeRateLimited(w http.ResponseWriter, retryAfter time.Duration, limitType string, limit int) {

@@ -110,13 +110,20 @@ func (w *Webhook) Check(ctx context.Context, body []byte) (Action, error) {
 		return Block(parsed.Reason), nil
 	case "rewrite":
 		if len(parsed.Replacement) == 0 {
-			return Allow(), nil
+			// A rewrite without a replacement is a malformed verdict —
+			// let the configured fail-open posture decide rather than
+			// silently allowing.
+			err := fmt.Errorf("guardrail %s returned rewrite with no replacement", w.id)
+			return w.onError(err), err
 		}
 		return Rewrite([]byte(parsed.Replacement)), nil
 	case "flag":
 		return Flag(parsed.Reason), nil
 	default:
-		return Allow(), nil
+		// Unknown verdicts go through the fail-open / fail-closed
+		// contract too — fail_open=false must not silently allow.
+		err := fmt.Errorf("guardrail %s returned unknown action %q", w.id, parsed.Action)
+		return w.onError(err), err
 	}
 }
 

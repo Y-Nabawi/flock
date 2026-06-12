@@ -41,6 +41,9 @@ type CacheStore interface {
 	Set(ctx context.Context, key, namespace string, value []byte, expiresAt time.Time) error
 	Delete(ctx context.Context, key string) error
 	DeleteNamespace(ctx context.Context, namespace string) error
+	// DeleteAll truncates the cache table — every namespace, every
+	// key. Backs the admin endpoint's `?all=1` flush.
+	DeleteAll(ctx context.Context) error
 	// SweepExpired deletes rows whose expires_at < now. Called by the
 	// cache package's reaper.
 	SweepExpired(ctx context.Context, now time.Time) (int64, error)
@@ -127,6 +130,12 @@ type ModelStore interface {
 // communication between the leader and this worker. v0.3 stores it in
 // plaintext for simplicity — a future revision will replace this with
 // per-direction HMAC keys.
+//
+// BoundKeyID records the API key id that first registered this node.
+// Subsequent register/heartbeat calls with a node-scope key must present
+// the same key id, so one leaked node token can't impersonate every
+// node. Empty ("" — legacy rows) means "not yet bound"; the binding is
+// established on the next successful register.
 type Node struct {
 	ID            string
 	Hostname      string
@@ -135,6 +144,7 @@ type Node struct {
 	RAMGB         int
 	Address       string
 	WorkerToken   string
+	BoundKeyID    string
 	HardwareJSON  string
 	LastHeartbeat time.Time
 	State         string
@@ -424,6 +434,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     ram_gb         INTEGER NOT NULL,
     address        TEXT NOT NULL DEFAULT '',
     worker_token   TEXT NOT NULL DEFAULT '',
+    bound_key_id   TEXT NOT NULL DEFAULT '',
     hardware_json  TEXT NOT NULL,
     last_heartbeat INTEGER NOT NULL,
     state          TEXT NOT NULL
@@ -543,6 +554,9 @@ func runColumnMigrations(ctx context.Context, db *sql.DB) error {
 		{table: "usage", column: "cost_usd", ddl: `ALTER TABLE usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`},
 		// v0.8 — per-key expiry. 0 = never expires (legacy default).
 		{table: "api_keys", column: "expires_at", ddl: `ALTER TABLE api_keys ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`},
+		// v0.9 — first-use node↔key binding. '' = unbound (legacy rows);
+		// bound on the node's next successful register.
+		{table: "nodes", column: "bound_key_id", ddl: `ALTER TABLE nodes ADD COLUMN bound_key_id TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, m := range migrations {
 		exists, err := columnExists(ctx, db, m.table, m.column)
@@ -693,9 +707,12 @@ func unixOrZero(t time.Time) int64 {
 }
 
 func (s *sqliteAPIKeys) Revoke(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked = 1 WHERE id = ?`, id)
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked = 1 WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("revoke api_key: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("api_key %s not found", id)
 	}
 	return nil
 }
@@ -849,8 +866,8 @@ type sqliteNodes struct{ db *sql.DB }
 
 func (s *sqliteNodes) Upsert(ctx context.Context, n Node) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO nodes(id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO nodes(id, hostname, os, arch, ram_gb, address, worker_token, bound_key_id, hardware_json, last_heartbeat, state)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   hostname=excluded.hostname,
 		   os=excluded.os,
@@ -858,19 +875,20 @@ func (s *sqliteNodes) Upsert(ctx context.Context, n Node) error {
 		   ram_gb=excluded.ram_gb,
 		   address=excluded.address,
 		   worker_token=CASE WHEN excluded.worker_token != '' THEN excluded.worker_token ELSE nodes.worker_token END,
+		   bound_key_id=CASE WHEN excluded.bound_key_id != '' THEN excluded.bound_key_id ELSE nodes.bound_key_id END,
 		   hardware_json=excluded.hardware_json,
 		   last_heartbeat=excluded.last_heartbeat,
 		   state=excluded.state`,
-		n.ID, n.Hostname, n.OS, n.Arch, n.RAMGB, n.Address, n.WorkerToken, n.HardwareJSON, n.LastHeartbeat.Unix(), n.State)
+		n.ID, n.Hostname, n.OS, n.Arch, n.RAMGB, n.Address, n.WorkerToken, n.BoundKeyID, n.HardwareJSON, n.LastHeartbeat.Unix(), n.State)
 	return err
 }
 
 func (s *sqliteNodes) Get(ctx context.Context, id string) (*Node, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state FROM nodes WHERE id = ?`, id)
+		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, bound_key_id, hardware_json, last_heartbeat, state FROM nodes WHERE id = ?`, id)
 	var n Node
 	var ts int64
-	if err := row.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.HardwareJSON, &ts, &n.State); err != nil {
+	if err := row.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.BoundKeyID, &n.HardwareJSON, &ts, &n.State); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -882,7 +900,7 @@ func (s *sqliteNodes) Get(ctx context.Context, id string) (*Node, error) {
 
 func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, hardware_json, last_heartbeat, state FROM nodes ORDER BY hostname`)
+		`SELECT id, hostname, os, arch, ram_gb, address, worker_token, bound_key_id, hardware_json, last_heartbeat, state FROM nodes ORDER BY hostname`)
 	if err != nil {
 		return nil, err
 	}
@@ -891,7 +909,7 @@ func (s *sqliteNodes) List(ctx context.Context) ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var ts int64
-		if err := rows.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.HardwareJSON, &ts, &n.State); err != nil {
+		if err := rows.Scan(&n.ID, &n.Hostname, &n.OS, &n.Arch, &n.RAMGB, &n.Address, &n.WorkerToken, &n.BoundKeyID, &n.HardwareJSON, &ts, &n.State); err != nil {
 			return nil, err
 		}
 		n.LastHeartbeat = time.Unix(ts, 0)
@@ -1575,6 +1593,11 @@ func (s *sqliteCache) Delete(ctx context.Context, key string) error {
 
 func (s *sqliteCache) DeleteNamespace(ctx context.Context, namespace string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE namespace = ?`, namespace)
+	return err
+}
+
+func (s *sqliteCache) DeleteAll(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cache`)
 	return err
 }
 

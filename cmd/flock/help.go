@@ -60,10 +60,15 @@ func (h helpSpec) print(w io.Writer) {
 	}
 }
 
-// wantsHelp returns true if args contain -h or --help.
+// wantsHelp returns true if args contain -h or --help anywhere, or the
+// bare word "help" as the FIRST arg only — `flock model search help`
+// must search for "help", not print the help screen.
 func wantsHelp(args []string) bool {
-	for _, a := range args {
-		if a == "-h" || a == "--help" || a == "help" {
+	for i, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+		if i == 0 && a == "help" {
 			return true
 		}
 	}
@@ -81,4 +86,12 @@ func dieHelp(h helpSpec) {
 func showHelp(h helpSpec) {
 	h.print(os.Stdout)
 	os.Exit(0)
+}
+
+// showUsageErr prints help to stderr WITHOUT exiting. This is the right
+// shape for fs.Usage on a flag.ExitOnError FlagSet: on a bad flag, the
+// flag package calls Usage and then exits 2 itself — exiting 0 from the
+// Usage hook (as showHelp would) would mask the error.
+func showUsageErr(h helpSpec) {
+	h.print(os.Stderr)
 }

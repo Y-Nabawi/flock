@@ -19,7 +19,8 @@ import (
 //	flock completion fish | source
 //
 // The scripts cover the static subcommand list and call back into
-// `flock __complete <kind>` for dynamic lists (model IDs, client IDs).
+// `flock completion __models` / `__installed` / `__clients` for dynamic
+// lists (catalog model IDs, installed model IDs, client IDs).
 func cmdCompletion(args []string) {
 	help := helpSpec{
 		name:    "completion",
@@ -116,14 +117,14 @@ _flock() {
     case "$sub" in
         model)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "add ls list search info remove rm" -- "$cur") )
+                COMPREPLY=( $(compgen -W "add ls list ps search info load unload remove rm" -- "$cur") )
                 return 0
             fi
             case "$subsub" in
                 add|info)
                     COMPREPLY=( $(compgen -W "$(flock completion __models 2>/dev/null)" -- "$cur") )
                     ;;
-                remove|rm)
+                load|unload|remove|rm)
                     COMPREPLY=( $(compgen -W "$(flock completion __installed 2>/dev/null)" -- "$cur") )
                     ;;
             esac
@@ -155,7 +156,7 @@ _flock() {
             ;;
         token)
             if [[ $cword -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "create ls list revoke" -- "$cur") )
+                COMPREPLY=( $(compgen -W "create ls list edit expire renew budget revoke" -- "$cur") )
             fi
             return 0
             ;;
@@ -213,7 +214,7 @@ _flock() {
             ;;
         sub)
             case $words[2] in
-                model)   _values 'subcommand' add ls list search info remove rm ;;
+                model)   _values 'subcommand' add ls list ps search info load unload remove rm ;;
                 connect|disconnect)
                     local -a clients
                     clients=(${(f)"$(flock completion __clients 2>/dev/null)"})
@@ -221,7 +222,7 @@ _flock() {
                     ;;
                 shard)   _values 'subcommand' create ls list remove rm ;;
                 node)    _values 'subcommand' ls list show drain remove rm ;;
-                token)   _values 'subcommand' create ls list revoke ;;
+                token)   _values 'subcommand' create ls list edit expire renew budget revoke ;;
                 config)  _values 'subcommand' show path edit ;;
                 completion) _values 'shell' bash zsh fish ;;
             esac
@@ -233,7 +234,7 @@ _flock() {
                     mods=(${(f)"$(flock completion __models 2>/dev/null)"})
                     _describe 'model' mods
                     ;;
-                'model remove'|'model rm')
+                'model load'|'model unload'|'model remove'|'model rm')
                     local -a mods
                     mods=(${(f)"$(flock completion __installed 2>/dev/null)"})
                     _describe 'installed model' mods
@@ -268,9 +269,11 @@ complete -c flock -f
 complete -c flock -n "not __fish_seen_subcommand_from up down status join node model shard token usage audit config doctor update upgrade connect disconnect invite completion version help" -a "up down status join node model shard token usage audit config doctor update upgrade connect disconnect invite completion version help"
 
 # model subcommands
-complete -c flock -n "__flock_using_command model" -a "add ls list search info remove rm"
+complete -c flock -n "__flock_using_command model" -a "add ls list ps search info load unload remove rm"
 complete -c flock -n "__flock_using_subcommand 'model add'" -a "(flock completion __models 2>/dev/null)"
 complete -c flock -n "__flock_using_subcommand 'model info'" -a "(flock completion __models 2>/dev/null)"
+complete -c flock -n "__flock_using_subcommand 'model load'" -a "(flock completion __installed 2>/dev/null)"
+complete -c flock -n "__flock_using_subcommand 'model unload'" -a "(flock completion __installed 2>/dev/null)"
 complete -c flock -n "__flock_using_subcommand 'model remove'" -a "(flock completion __installed 2>/dev/null)"
 complete -c flock -n "__flock_using_subcommand 'model rm'" -a "(flock completion __installed 2>/dev/null)"
 
@@ -285,7 +288,7 @@ complete -c flock -n "__flock_using_subcommand 'shard remove'" -a "(flock comple
 
 # node / token / config
 complete -c flock -n "__flock_using_command node" -a "ls list show drain remove rm"
-complete -c flock -n "__flock_using_command token" -a "create ls list revoke"
+complete -c flock -n "__flock_using_command token" -a "create ls list edit expire renew budget revoke"
 complete -c flock -n "__flock_using_command config" -a "show path edit"
 complete -c flock -n "__flock_using_command completion" -a "bash zsh fish"
 `
