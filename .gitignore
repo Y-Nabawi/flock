@@ -32,3 +32,6 @@ ENTERPRISE.md
 
 # Local planning workspace (per-task plans, sprint notes — never committed)
 /planning/
+
+# presentation demo (local-only)
+/demo/
