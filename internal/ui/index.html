@@ -52,6 +52,7 @@
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="dashboard">Dashboard</button>
         <button class="tab px-4 py-2 text-emerald-300 hover:text-white" data-view="connect">Connect</button>
         <button class="tab px-4 py-2 text-emerald-300 hover:text-white" data-view="playground">Playground</button>
+        <button class="tab px-4 py-2 text-emerald-300 hover:text-white" data-view="chat">Chat</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="nodes">Nodes</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="models">Models</button>
         <button class="tab px-4 py-2 text-slate-300 hover:text-white" data-view="shards">Shards</button>
@@ -87,6 +88,7 @@
       <div id="view-dashboard" class="view space-y-6"></div>
       <div id="view-connect" class="view hidden"></div>
       <div id="view-playground" class="view hidden"></div>
+      <div id="view-chat" class="view hidden"></div>
       <div id="view-nodes" class="view hidden"></div>
       <div id="view-models" class="view hidden"></div>
       <div id="view-shards" class="view hidden"></div>
@@ -582,6 +584,7 @@ function switchView(v) {
     dashboard: renderDashboard,
     connect: renderConnect,
     playground: renderPlayground,
+    chat: renderChat,
     nodes: renderNodes,
     models: renderModels,
     shards: renderShards,
@@ -1223,6 +1226,165 @@ function pgClear() {
   $("#pgResponseBox").classList.add("hidden");
   $("#pgResponsePre").textContent = "";
   pgImageClear();
+}
+
+// =========== Chat tab ===========
+//
+// Minimal multi-turn chat for informal model testing. The transcript
+// lives in a page-scoped array only — nothing is persisted; reload (or
+// Clear) starts fresh. One-shot / vision / embedding probes live in
+// the Playground; this tab exists to check conversational behavior
+// across several turns. Like the Playground it registers no polling,
+// so an in-flight stream is never re-rendered from under the user.
+
+let chatHistory = []; // [{role, content}] — in-memory only
+let chatController = null;
+
+async function renderChat() {
+  const root = $("#view-chat");
+  root.innerHTML = `<div class="text-sm text-slate-500">Loading models…</div>`;
+  try {
+    if (!playgroundModels) {
+      const resp = await api("/v1/models");
+      playgroundModels = (resp.data || []).map((m) => m.id);
+    }
+    const options = playgroundModels.map((id, i) =>
+      `<option value="${esc(id)}"${i === 0 ? " selected" : ""}>${esc(id)}</option>`
+    ).join("");
+    root.innerHTML = `
+      <div class="mb-3 flex items-end justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Chat</h2>
+          <p class="text-xs text-slate-600">Multi-turn test chat through the gateway. In-memory only — nothing is stored; reload or Clear wipes the transcript.</p>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Model</label>
+          <select id="chatModel" class="border border-slate-300 rounded px-2 py-1 text-sm">${options || "<option>auto</option>"}</select>
+        </div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded flex flex-col" style="height: calc(100vh - 230px); min-height: 320px;">
+        <div id="chatLog" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+        <div id="chatStatus" class="px-4 pb-1 text-xs text-slate-500"></div>
+        <div class="border-t border-slate-200 p-3 flex gap-2 items-end">
+          <textarea id="chatInput" rows="2" class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono" placeholder="Type a message — Enter sends, Shift+Enter for a newline"></textarea>
+          <button id="chatSendBtn" onclick="chatSend()" class="bg-slate-900 text-white px-4 py-2 rounded text-sm font-medium">Send</button>
+          <button onclick="chatClear()" class="bg-slate-200 text-slate-700 px-3 py-2 rounded text-sm">Clear</button>
+        </div>
+      </div>`;
+    // Rebuild the transcript from memory so tab switches keep it.
+    chatHistory.forEach((m) => chatBubble(m.role, m.content));
+    $("#chatInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chatSend(); }
+    });
+    $("#chatInput").focus();
+  } catch (e) {
+    root.innerHTML = `<div class="text-sm text-red-600">${esc(e.message)}</div>`;
+  }
+}
+
+// chatBubble appends one message row to the log and returns the bubble
+// element so a streaming reply can keep appending to it. Content goes
+// through textContent, never innerHTML.
+function chatBubble(role, text) {
+  const log = $("#chatLog");
+  const mine = role === "user";
+  const row = document.createElement("div");
+  row.className = mine ? "flex justify-end" : "flex justify-start";
+  const bubble = document.createElement("div");
+  bubble.className = mine
+    ? "max-w-[80%] bg-slate-900 text-white rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+    : "max-w-[80%] bg-slate-100 text-slate-900 border border-slate-200 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap";
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
+}
+
+async function chatSend() {
+  const input = $("#chatInput");
+  const text = input.value.trim();
+  if (!text) { input.focus(); return; }
+  if (chatController) chatController.abort();
+  chatController = new AbortController();
+  const model = $("#chatModel").value;
+  const status = $("#chatStatus");
+  const btn = $("#chatSendBtn");
+  input.value = "";
+  btn.disabled = true;
+  btn.classList.add("opacity-50");
+
+  chatHistory.push({ role: "user", content: text });
+  chatBubble("user", text);
+  const reply = chatBubble("assistant", "");
+  status.textContent = "streaming…";
+  const t0 = performance.now();
+  let usage = null;
+  try {
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      signal: chatController.signal,
+      headers: { "Authorization": "Bearer " + API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: chatHistory, stream: true }),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "" || payload === "[DONE]") continue;
+        try {
+          const obj = JSON.parse(payload);
+          const delta = obj.choices?.[0]?.delta?.content;
+          if (delta) {
+            reply.textContent += delta;
+            $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+          }
+          if (obj.usage) usage = obj.usage;
+        } catch { /* skip malformed frame */ }
+      }
+    }
+    chatHistory.push({ role: "assistant", content: reply.textContent });
+    const bits = [`done · ${Math.round(performance.now() - t0)} ms · ${chatHistory.length} msgs`];
+    if (usage) bits.push(`${usage.prompt_tokens ?? "?"}+${usage.completion_tokens ?? "?"} tok`);
+    status.textContent = bits.join(" · ");
+    appendHeaderHints(status, resp.headers);
+  } catch (e) {
+    if (e.name === "AbortError") {
+      // Keep whatever streamed before the abort; drop an empty bubble.
+      status.textContent = "aborted";
+      if (reply.textContent) chatHistory.push({ role: "assistant", content: reply.textContent });
+      else reply.parentElement.remove();
+    } else {
+      // The user turn stays in history (Send again retries the whole
+      // conversation); the error bubble is display-only and disappears
+      // on the next tab switch since it's never recorded.
+      status.textContent = "error";
+      reply.className = "max-w-[80%] bg-red-50 text-red-700 border border-red-200 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap";
+      reply.textContent = `[error: ${e.message}]`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("opacity-50");
+    chatController = null;
+    input.focus();
+  }
+}
+
+function chatClear() {
+  if (chatController) chatController.abort();
+  chatHistory = [];
+  $("#chatLog").innerHTML = "";
+  $("#chatStatus").textContent = "";
+  $("#chatInput").focus();
 }
 
 async function renderNodes() {
