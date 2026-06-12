@@ -9,7 +9,7 @@ capabilities: [chat, vision]
 recommended_engines: [vllm, mlx]
 hardware:
   min_ram_gb: 4
-tags: [vision, tiny, edge, bsl-1.1]
+tags: [vision, tiny, edge, bsl-1.1, restricted-license]
 license: bsl-1.1
 license_url: https://huggingface.co/moondream/moondream3-preview
 released: 2026-03-12
